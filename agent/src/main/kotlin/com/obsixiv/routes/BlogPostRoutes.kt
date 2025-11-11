@@ -57,6 +57,46 @@ fun Route.generateBlogPostRoute() {
     }
 }
 
+fun Route.chatRoute() {
+    val agent = AlphaXivAgent()
+    
+    post("/chat") {
+        try {
+            println("💬 Received chat request")
+            val request = call.receive<ChatRequest>()
+            println("✅ Question: ${request.question.take(100)}...")
+            
+            val apiKey = call.request.headers["X-API-Key"]
+            if (apiKey.isNullOrBlank()) {
+                println("❌ No API key provided")
+                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "API key required"))
+                return@post
+            }
+            
+            println("🤖 Generating answer...")
+            val answer = agent.answerQuestion(
+                pdfContent = request.pdfContent,
+                question = request.question,
+                apiKey = apiKey,
+                temperature = request.temperature
+            )
+            
+            println("✅ Answer generated! Length: ${answer.length}")
+            call.respond(HttpStatusCode.OK, ChatResponse(
+                answer = answer,
+                success = true
+            ))
+            
+        } catch (e: Exception) {
+            println("❌ ERROR: ${e.javaClass.simpleName}: ${e.message}")
+            e.printStackTrace()
+            call.respond(HttpStatusCode.InternalServerError, mapOf(
+                "error" to "Failed to answer question: ${e.message}"
+            ))
+        }
+    }
+}
+
 fun Route.healthCheckRoute() {
     get("/health") {
         call.respond(HttpStatusCode.OK, mapOf(

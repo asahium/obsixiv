@@ -43,11 +43,12 @@ fun Application.configureCORS() {
 }
 
 fun Application.configureRouting() {
-    routing {
-        route("/api/v1") {
-            generateBlogPostRoute()
-            healthCheckRoute()
+        routing {
+            route("/api/v1") {
+                generateBlogPostRoute()
+                chatRoute()
+                healthCheckRoute()
+            }
         }
-    }
 }
 

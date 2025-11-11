@@ -177,6 +177,33 @@ class AlphaXivAgent {
         return content ?: throw Exception("Empty response from OpenAI")
     }
     
+    suspend fun answerQuestion(
+        pdfContent: String,
+        question: String,
+        apiKey: String,
+        temperature: Double = 0.7
+    ): String {
+        val prompt = """
+            Based on the following PDF content, answer the question.
+            
+            PDF Content:
+            $pdfContent
+            
+            Question: $question
+            
+            Please provide a clear, concise, and helpful answer based on the content provided.
+        """.trimIndent()
+        
+        val systemPrompt = "You are a helpful research assistant. Answer questions about academic papers clearly and accurately."
+        
+        return when {
+            apiKey.startsWith("pplx-") -> generateWithPerplexity(apiKey, systemPrompt, prompt, temperature)
+            apiKey.startsWith("sk-ant-") -> generateWithClaude(apiKey, systemPrompt, prompt, temperature)
+            apiKey.startsWith("sk-") -> generateWithOpenAI(apiKey, systemPrompt, prompt, temperature)
+            else -> throw Exception("Unknown API key format")
+        }
+    }
+    
     private fun buildStyleInstructions(includeEmojis: Boolean, includeHumor: Boolean): String {
         val instructions = mutableListOf<String>()
         
