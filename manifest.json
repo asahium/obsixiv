@@ -1,0 +1,11 @@
+{
+  "id": "obsixiv",
+  "name": "ObsiXiv",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Generate AlphaXiv-style blog posts from PDF papers using Koog AI",
+  "author": "Danila Biktimirov",
+  "authorUrl": "https://github.com/danila.biktimirov",
+  "isDesktopOnly": false
+}
+

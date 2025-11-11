@@ -1,0 +1,34 @@
+# EditorConfig is awesome: https://EditorConfig.org
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# TypeScript/JavaScript
+[*.{ts,js,mjs}]
+indent_style = tab
+indent_size = 4
+
+# Kotlin
+[*.{kt,kts}]
+indent_style = tab
+indent_size = 4
+
+# JSON
+[*.json]
+indent_style = space
+indent_size = 2
+
+# Markdown & YAML
+[*.{md,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# Shell scripts
+[*.sh]
+indent_style = space
+indent_size = 2

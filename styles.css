@@ -1,0 +1,25 @@
+/* ObsiXiv Plugin Styles */
+
+.obsixiv-ribbon-class {
+    color: var(--interactive-accent);
+}
+
+.obsixiv-ribbon-class:hover {
+    color: var(--interactive-accent-hover);
+}
+
+/* Optional: Add custom styling for generated blog posts */
+.obsixiv-blog-post {
+    font-family: var(--font-text);
+    line-height: 1.6;
+}
+
+.obsixiv-blog-post h1 {
+    color: var(--text-accent);
+}
+
+.obsixiv-blog-post h2 {
+    border-bottom: 2px solid var(--background-modifier-border);
+    padding-bottom: 0.3em;
+}
+
