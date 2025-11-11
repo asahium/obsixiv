@@ -293,12 +293,6 @@ obsixiv/
 │   ├── start-agent.bat         # Start agent (Windows)
 │   └── stop-agent.sh           # Stop agent
 │
-├── 📂 docs/                    # Documentation
-│   ├── SETUP_GUIDE.md          # Detailed setup
-│   ├── INSTALL.md              # Installation guide
-│   ├── CONTRIBUTING.md         # How to contribute
-│   └── ...                     # More docs
-│
 ├── 📂 examples/                # Examples
 │   └── example-output.md       # Sample blog post
 │
