@@ -41,6 +41,14 @@ application {
     mainClass.set("com.obsixiv.MainKt")
 }
 
+tasks.jar {
+    manifest {
+        attributes["Main-Class"] = "com.obsixiv.MainKt"
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) })
+}
+
 tasks.test {
     useJUnitPlatform()
 }

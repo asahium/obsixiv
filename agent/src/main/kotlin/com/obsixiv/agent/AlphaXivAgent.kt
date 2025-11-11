@@ -8,7 +8,7 @@ import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.*
 
 @Serializable
 data class ClaudeMessage(
@@ -35,6 +35,21 @@ data class ClaudeResponse(
     val content: List<ClaudeContent>
 )
 
+@Serializable
+data class PerplexityResponse(
+    val choices: List<PerplexityChoice>
+)
+
+@Serializable
+data class PerplexityChoice(
+    val message: PerplexityMessage
+)
+
+@Serializable
+data class PerplexityMessage(
+    val content: String
+)
+
 class AlphaXivAgent {
     
     private val client = HttpClient(CIO) {
@@ -43,6 +58,10 @@ class AlphaXivAgent {
                 ignoreUnknownKeys = true
                 isLenient = true
             })
+        }
+        
+        engine {
+            requestTimeout = 60_000  // 60 seconds
         }
     }
     
@@ -64,6 +83,48 @@ class AlphaXivAgent {
             accessible, and include creative commentary, memes references, and emojis.
         """.trimIndent()
         
+        // Determine API based on key prefix
+        return when {
+            apiKey.startsWith("pplx-") -> generateWithPerplexity(apiKey, systemPrompt, prompt, temperature)
+            apiKey.startsWith("sk-ant-") -> generateWithClaude(apiKey, systemPrompt, prompt, temperature)
+            apiKey.startsWith("sk-") -> generateWithOpenAI(apiKey, systemPrompt, prompt, temperature)
+            else -> throw Exception("Unknown API key format. Supported: Perplexity (pplx-), Claude (sk-ant-), OpenAI (sk-)")
+        }
+    }
+    
+    private suspend fun generateWithPerplexity(apiKey: String, systemPrompt: String, prompt: String, temperature: Double): String {
+        val escapedSystemPrompt = systemPrompt.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+        val escapedPrompt = prompt.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+        
+        val requestBody = """
+            {
+                "model": "sonar-pro",
+                "messages": [
+                    {"role": "system", "content": "$escapedSystemPrompt"},
+                    {"role": "user", "content": "$escapedPrompt"}
+                ],
+                "temperature": $temperature,
+                "max_tokens": 4000
+            }
+        """.trimIndent()
+        
+        val response = client.post("https://api.perplexity.ai/chat/completions") {
+            header("Authorization", "Bearer $apiKey")
+            contentType(ContentType.Application.Json)
+            setBody(requestBody)
+        }
+        
+        val responseText: String = response.body()
+        val json = Json.parseToJsonElement(responseText).jsonObject
+        val choices = json["choices"]?.jsonArray
+        val firstChoice = choices?.firstOrNull()?.jsonObject
+        val message = firstChoice?.get("message")?.jsonObject
+        val content = message?.get("content")?.jsonPrimitive?.content
+        
+        return content ?: throw Exception("Empty response from Perplexity")
+    }
+    
+    private suspend fun generateWithClaude(apiKey: String, systemPrompt: String, prompt: String, temperature: Double): String {
         val request = ClaudeRequest(
             model = "claude-sonnet-4-20250514",
             max_tokens = 4000,
@@ -81,7 +142,39 @@ class AlphaXivAgent {
         }
         
         val claudeResponse: ClaudeResponse = response.body()
-        return claudeResponse.content.firstOrNull()?.text ?: throw Exception("Empty response from Claude API")
+        return claudeResponse.content.firstOrNull()?.text ?: throw Exception("Empty response from Claude")
+    }
+    
+    private suspend fun generateWithOpenAI(apiKey: String, systemPrompt: String, prompt: String, temperature: Double): String {
+        val escapedSystemPrompt = systemPrompt.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+        val escapedPrompt = prompt.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+        
+        val requestBody = """
+            {
+                "model": "gpt-4o",
+                "messages": [
+                    {"role": "system", "content": "$escapedSystemPrompt"},
+                    {"role": "user", "content": "$escapedPrompt"}
+                ],
+                "temperature": $temperature,
+                "max_tokens": 4000
+            }
+        """.trimIndent()
+        
+        val response = client.post("https://api.openai.com/v1/chat/completions") {
+            header("Authorization", "Bearer $apiKey")
+            contentType(ContentType.Application.Json)
+            setBody(requestBody)
+        }
+        
+        val responseText: String = response.body()
+        val json = Json.parseToJsonElement(responseText).jsonObject
+        val choices = json["choices"]?.jsonArray
+        val firstChoice = choices?.firstOrNull()?.jsonObject
+        val message = firstChoice?.get("message")?.jsonObject
+        val content = message?.get("content")?.jsonPrimitive?.content
+        
+        return content ?: throw Exception("Empty response from OpenAI")
     }
     
     private fun buildStyleInstructions(includeEmojis: Boolean, includeHumor: Boolean): String {

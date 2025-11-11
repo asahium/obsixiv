@@ -112,20 +112,35 @@ export default class ObsiXivPlugin extends Plugin {
 		}
 
 		new Notice("Extracting text from PDF...");
+		console.log("🚀 Starting PDF processing for:", pdfFile.name);
 
 		try {
 			// Extract PDF content
-			const pdfContent = await this.extractPdfText(pdfFile);
+			console.log("📄 Extracting PDF text...");
+			let pdfContent = await this.extractPdfText(pdfFile);
+			console.log("✅ PDF text extracted. Length:", pdfContent.length);
 
 			if (!pdfContent || pdfContent.length < 100) {
+				console.error("❌ Not enough text extracted:", pdfContent.length);
 				new Notice("Could not extract enough text from PDF");
 				return;
 			}
 
+			// Limit text size to avoid API timeouts (take first 8000 chars)
+			const maxLength = 8000;
+			if (pdfContent.length > maxLength) {
+				console.log(`✂️ Trimming PDF content from ${pdfContent.length} to ${maxLength} chars`);
+				pdfContent = pdfContent.substring(0, maxLength) + "\n\n[Content truncated for processing]";
+			}
+
 			new Notice("Generating blog post with Koog Agent...");
+			console.log("🤖 Calling agent with text length:", pdfContent.length);
+			console.log("🔑 API key:", this.settings.apiKey.substring(0, 10) + "...");
+			console.log("🌐 Agent URL:", this.settings.agentUrl);
 
 			// Generate blog post using Koog Agent
 			const blogPost = await this.generateBlogPostWithKoogAgent(pdfContent);
+			console.log("✅ Blog post received! Length:", blogPost.length);
 
 			// Save blog post
 			await this.saveBlogPost(pdfFile.basename, blogPost);
@@ -181,6 +196,15 @@ export default class ObsiXivPlugin extends Plugin {
 
 	async generateBlogPostWithKoogAgent(pdfContent: string): Promise<string> {
 		try {
+			console.log("📡 Sending request to agent...");
+			const requestBody = {
+				pdfContent: pdfContent,
+				temperature: this.settings.temperature,
+				includeEmojis: this.settings.includeEmojis,
+				includeHumor: this.settings.includeHumor,
+			};
+			console.log("📦 Request body size:", JSON.stringify(requestBody).length);
+			
 			const response = await requestUrl({
 				url: `${this.settings.agentUrl}/api/v1/generate`,
 				method: "POST",
@@ -188,13 +212,17 @@ export default class ObsiXivPlugin extends Plugin {
 					"Content-Type": "application/json",
 					"X-API-Key": this.settings.apiKey,
 				},
-				body: JSON.stringify({
-					pdfContent: pdfContent,
-					temperature: this.settings.temperature,
-					includeEmojis: this.settings.includeEmojis,
-					includeHumor: this.settings.includeHumor,
-				}),
+				body: JSON.stringify(requestBody),
+				throw: false,
 			});
+
+			console.log("📨 Response status:", response.status);
+			
+			if (response.status !== 200) {
+				console.error("❌ Agent error response:", response);
+				console.error("Response body:", response.text);
+				throw new Error(`Request failed, status ${response.status}`);
+			}
 
 			const data = response.json;
 
@@ -205,7 +233,7 @@ export default class ObsiXivPlugin extends Plugin {
 			}
 		} catch (error) {
 			console.error("Koog Agent error:", error);
-			throw new Error(`Koog Agent error: ${error.message}`);
+			throw new Error(`Koog Agent error: ${error.message || error}`);
 		}
 	}
 
@@ -243,10 +271,11 @@ generator: ObsiXiv
 		// Create the file
 		await this.app.vault.create(filename, fullContent);
 
-		// Open the new file
+		// Open the new file in split screen on the right
 		const file = this.app.vault.getAbstractFileByPath(filename);
 		if (file instanceof TFile) {
-			await this.app.workspace.getLeaf().openFile(file);
+			const leaf = this.app.workspace.getLeaf('split', 'vertical');
+			await leaf.openFile(file);
 		}
 	}
 }
