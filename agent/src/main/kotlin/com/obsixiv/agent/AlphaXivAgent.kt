@@ -1,11 +1,50 @@
 package com.obsixiv.agent
 
-import ai.koog.agent.Agent
-import ai.koog.agent.AgentConfig
-import ai.koog.models.ModelProvider
-import ai.koog.prompt.PromptTemplate
+import io.ktor.client.*
+import io.ktor.client.call.*
+import io.ktor.client.engine.cio.*
+import io.ktor.client.plugins.contentnegotiation.*
+import io.ktor.client.request.*
+import io.ktor.http.*
+import io.ktor.serialization.kotlinx.json.*
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+@Serializable
+data class ClaudeMessage(
+    val role: String,
+    val content: String
+)
+
+@Serializable
+data class ClaudeRequest(
+    val model: String,
+    val max_tokens: Int,
+    val temperature: Double,
+    val messages: List<ClaudeMessage>
+)
+
+@Serializable
+data class ClaudeContent(
+    val type: String,
+    val text: String
+)
+
+@Serializable
+data class ClaudeResponse(
+    val content: List<ClaudeContent>
+)
 
 class AlphaXivAgent {
+    
+    private val client = HttpClient(CIO) {
+        install(ContentNegotiation) {
+            json(Json {
+                ignoreUnknownKeys = true
+                isLenient = true
+            })
+        }
+    }
     
     suspend fun generateBlogPost(
         pdfContent: String,
@@ -14,26 +53,35 @@ class AlphaXivAgent {
         includeEmojis: Boolean = true,
         includeHumor: Boolean = true
     ): String {
-        // Configure Koog agent
-        val config = AgentConfig(
-            name = "AlphaXiv Blog Generator",
-            model = ModelProvider.ANTHROPIC_CLAUDE_SONNET_4,
-            apiKey = apiKey,
-            temperature = temperature,
-            maxTokens = 4000
-        )
-        
-        val agent = Agent(config)
-        
         // Build prompt based on settings
         val styleInstructions = buildStyleInstructions(includeEmojis, includeHumor)
-        
         val prompt = buildPrompt(pdfContent, styleInstructions)
         
-        // Generate blog post using Koog agent
-        val response = agent.generate(prompt)
+        // Call Claude API directly
+        val systemPrompt = """
+            You are an expert at writing engaging, humorous, and informative blog posts about 
+            academic papers in the style of AlphaXiv. Your posts should be entertaining, 
+            accessible, and include creative commentary, memes references, and emojis.
+        """.trimIndent()
         
-        return response.content
+        val request = ClaudeRequest(
+            model = "claude-sonnet-4-20250514",
+            max_tokens = 4000,
+            temperature = temperature,
+            messages = listOf(
+                ClaudeMessage(role = "user", content = "$systemPrompt\n\n$prompt")
+            )
+        )
+        
+        val response = client.post("https://api.anthropic.com/v1/messages") {
+            header("x-api-key", apiKey)
+            header("anthropic-version", "2023-06-01")
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+        
+        val claudeResponse: ClaudeResponse = response.body()
+        return claudeResponse.content.firstOrNull()?.text ?: throw Exception("Empty response from Claude API")
     }
     
     private fun buildStyleInstructions(includeEmojis: Boolean, includeHumor: Boolean): String {

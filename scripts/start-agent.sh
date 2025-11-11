@@ -20,8 +20,8 @@ if ! command -v docker-compose &> /dev/null; then
     exit 1
 fi
 
-# Navigate to koog-agent directory
-cd koog-agent
+# Navigate to agent directory
+cd agent
 
 # Start the agent
 echo "📦 Building and starting Koog Agent..."

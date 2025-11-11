@@ -12,19 +12,17 @@ repositories {
 }
 
 dependencies {
-    // Koog Framework
-    implementation("ai.koog:koog-core:0.1.0")
-    
     // Ktor for HTTP server
     implementation("io.ktor:ktor-server-core:2.3.6")
     implementation("io.ktor:ktor-server-netty:2.3.6")
     implementation("io.ktor:ktor-server-content-negotiation:2.3.6")
     implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.6")
     implementation("io.ktor:ktor-server-cors:2.3.6")
-    implementation("io.ktor:ktor-server-auth:2.3.6")
     
-    // PDF processing
-    implementation("org.apache.pdfbox:pdfbox:3.0.0")
+    // Ktor HTTP client for API calls
+    implementation("io.ktor:ktor-client-core:2.3.6")
+    implementation("io.ktor:ktor-client-cio:2.3.6")
+    implementation("io.ktor:ktor-client-content-negotiation:2.3.6")
     
     // Kotlinx serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")

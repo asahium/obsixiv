@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
-An Obsidian plugin that generates AlphaXiv-style blog posts from PDF papers using **Koog AI Agent** (Kotlin framework).
+An Obsidian plugin that generates AlphaXiv-style blog posts from PDF papers using **AI Agent** (Kotlin + Claude API).
 
 > Transform dense academic papers into engaging, humorous, and accessible blog posts with just one click!
 
@@ -32,7 +32,7 @@ An Obsidian plugin that generates AlphaXiv-style blog posts from PDF papers usin
 ## ✨ Features
 
 - 📄 **PDF Text Extraction** - Automatically extracts content from academic papers
-- 🤖 **Koog AI Framework** - Powerful Kotlin-based AI agent framework
+- 🤖 **Kotlin AI Agent** - Backend service with direct Claude API integration
 - 🎨 **AlphaXiv Style** - Generates fun, informative, and accessible blog posts
 - 😄 **Emojis & Humor** - Adds jokes, memes, and entertaining commentary
 - ⚙️ **Flexible Settings** - Customize temperature and generation style
@@ -45,13 +45,13 @@ An Obsidian plugin that generates AlphaXiv-style blog posts from PDF papers usin
 
 ObsiXiv consists of two components:
 
-1. **Koog Agent** (Kotlin) - AI agent that processes PDFs and generates blog posts
+1. **AI Agent** (Kotlin) - Backend service that calls Claude API to generate blog posts
 2. **Obsidian Plugin** (TypeScript) - UI integration with Obsidian
 
 ```
-┌─────────────┐      PDF Text      ┌──────────────┐      AI Generation      ┌─────────┐
-│   Obsidian  │ ──────────────────► │  Koog Agent  │ ──────────────────────► │  Claude │
-│   Plugin    │ ◄──────────────────  │   (Kotlin)   │ ◄──────────────────────  │   API   │
+┌─────────────┐      PDF Text      ┌──────────────┐      HTTP Request       ┌─────────┐
+│   Obsidian  │ ──────────────────► │  AI Agent    │ ──────────────────────► │  Claude │
+│   Plugin    │ ◄──────────────────  │  (Kotlin)    │ ◄──────────────────────  │   API   │
 └─────────────┘    Blog Post MD     └──────────────┘       Blog Post         └─────────┘
 ```
 
@@ -108,7 +108,7 @@ v16.0.0+ (Node)
 
 ## 🚀 Quick Start
 
-### Step 1: Start Koog Agent
+### Step 1: Start AI Agent
 
 **macOS/Linux:**
 ```bash
@@ -122,7 +122,7 @@ scripts\start-agent.bat
 
 **Or manually with Docker:**
 ```bash
-cd koog-agent
+cd agent
 docker-compose up -d
 ```
 
@@ -174,7 +174,7 @@ cd obsixiv
 ./scripts/start-agent.sh
 
 # Or with Docker directly
-cd koog-agent
+cd agent
 docker-compose up -d
 
 # Verify it's running
@@ -185,7 +185,7 @@ Expected response:
 ```json
 {
   "status": "ok",
-  "service": "obsixiv-koog-agent",
+  "service": "obsixiv-agent",
   "version": "1.0.0"
 }
 ```
@@ -279,7 +279,7 @@ Access via Obsidian Settings → ObsiXiv
 ```
 obsixiv/
 │
-├── 📂 koog-agent/              # Kotlin AI Agent
+├── 📂 agent/              # Kotlin AI Agent
 │   ├── src/main/kotlin/        # Source code
 │   │   ├── agent/              # Koog agent implementation
 │   │   ├── routes/             # API endpoints
@@ -344,7 +344,7 @@ npm run build -- --no-emit
 ### Koog Agent Development
 
 ```bash
-cd koog-agent
+cd agent
 
 # Run with Gradle
 ./gradlew run
@@ -389,7 +389,7 @@ docker ps
 
 **Check logs:**
 ```bash
-cd koog-agent
+cd agent
 docker-compose logs -f
 ```
 
@@ -469,7 +469,7 @@ Contributions are welcome! Please read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.
 - 🏗️ [Project Structure](docs/PROJECT_STRUCTURE.md) - Architecture overview
 - 🔧 [Build & Test](docs/BUILD_AND_TEST.md) - Development guide
 - 📝 [Changelog](docs/CHANGELOG.md) - Version history
-- 🔨 [Koog Agent Docs](koog-agent/README.md) - Agent documentation
+- 🔨 [Koog Agent Docs](agent/README.md) - Agent documentation
 
 ---
 

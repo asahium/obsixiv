@@ -1,5 +1,7 @@
 package com.obsixiv
 
+import com.obsixiv.routes.generateBlogPostRoute
+import com.obsixiv.routes.healthCheckRoute
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
 import io.ktor.server.netty.*
@@ -34,6 +36,7 @@ fun Application.configureCORS() {
         anyHost()
         allowHeader("Content-Type")
         allowHeader("Authorization")
+        allowHeader("X-API-Key")
         allowMethod(io.ktor.http.HttpMethod.Post)
         allowMethod(io.ktor.http.HttpMethod.Get)
     }
