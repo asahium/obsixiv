@@ -217,60 +217,87 @@ export default class ObsiXivPlugin extends Plugin {
 		await this.generateBlogPostFromPdf(activeFile);
 	}
 
-	// Search for paper by title using ArXiv API
-	async searchPaperOnArxiv(title: string): Promise<{ url: string; metadata: any } | null> {
+	// Search for multiple papers by title using ArXiv API
+	async searchPapersOnArxiv(title: string, maxResults: number = 10): Promise<Array<{ url: string; metadata: any }>> {
 		try {
-			const searchUrl = `https://export.arxiv.org/api/query?search_query=ti:${encodeURIComponent(title)}&start=0&max_results=1&sortBy=relevance&sortOrder=descending`;
+			const searchUrl = `https://export.arxiv.org/api/query?search_query=ti:${encodeURIComponent(title)}&start=0&max_results=${maxResults}&sortBy=relevance&sortOrder=descending`;
 			
-			console.log("🔍 Searching ArXiv for:", title);
+			console.log("🔍 Searching ArXiv for:", title, `(max ${maxResults} results)`);
 			const response = await requestUrl({ url: searchUrl });
 			
 			// Parse XML response
 			const parser = new DOMParser();
 			const xmlDoc = parser.parseFromString(response.text, "text/xml");
 			
-			const entry = xmlDoc.querySelector("entry");
-			if (!entry) {
+			const entries = xmlDoc.querySelectorAll("entry");
+			if (!entries || entries.length === 0) {
 				console.log("❌ No results found on ArXiv");
-				return null;
+				return [];
 			}
 
-			const pdfLink = Array.from(entry.querySelectorAll("link"))
-				.find((link) => link.getAttribute("title") === "pdf")
-				?.getAttribute("href");
+			const results: Array<{ url: string; metadata: any }> = [];
 
-			if (!pdfLink) {
-				console.log("❌ No PDF link found in ArXiv entry");
-				return null;
-			}
+			entries.forEach((entry) => {
+				// Try multiple ways to find PDF link
+				const links = Array.from(entry.querySelectorAll("link"));
+				
+				// Method 1: Look for link with title="pdf"
+				let pdfLink = links.find((link) => link.getAttribute("title") === "pdf")?.getAttribute("href");
+				
+				// Method 2: Look for link with type="application/pdf"
+				if (!pdfLink) {
+					pdfLink = links.find((link) => link.getAttribute("type") === "application/pdf")?.getAttribute("href");
+				}
+				
+				// Method 3: Build PDF link from arxiv ID
+				if (!pdfLink) {
+					const idElement = entry.querySelector("id");
+					if (idElement?.textContent) {
+						const arxivId = idElement.textContent.split("/abs/")[1];
+						if (arxivId) {
+							pdfLink = `https://arxiv.org/pdf/${arxivId}.pdf`;
+						}
+					}
+				}
 
-			const arxivId = entry.querySelector("id")?.textContent?.split("/abs/")[1] || "";
-			const paperTitle = entry.querySelector("title")?.textContent?.trim() || title;
-			const authors = Array.from(entry.querySelectorAll("author name")).map(
-				(author) => author.textContent?.trim() || ""
-			);
-			const published = entry.querySelector("published")?.textContent?.trim() || "";
-			const summary = entry.querySelector("summary")?.textContent?.trim() || "";
-			const categories = Array.from(entry.querySelectorAll("category")).map(
-				(cat) => cat.getAttribute("term") || ""
-			);
+				if (!pdfLink) return; // Skip this entry
 
-			const metadata = {
-				arxivId,
-				title: paperTitle,
-				authors,
-				published,
-				summary,
-				categories,
-				url: `https://arxiv.org/abs/${arxivId}`,
-			};
+				const arxivId = entry.querySelector("id")?.textContent?.split("/abs/")[1] || "";
+				const paperTitle = entry.querySelector("title")?.textContent?.trim().replace(/\s+/g, ' ') || title;
+				const authors = Array.from(entry.querySelectorAll("author name")).map(
+					(author) => author.textContent?.trim() || ""
+				);
+				const published = entry.querySelector("published")?.textContent?.trim() || "";
+				const summary = entry.querySelector("summary")?.textContent?.trim().replace(/\s+/g, ' ') || "";
+				const categories = Array.from(entry.querySelectorAll("category")).map(
+					(cat) => cat.getAttribute("term") || ""
+				);
 
-			console.log("✅ Found on ArXiv:", paperTitle);
-			return { url: pdfLink, metadata };
+				const metadata = {
+					arxivId,
+					title: paperTitle,
+					authors,
+					published,
+					summary,
+					categories,
+					url: `https://arxiv.org/abs/${arxivId}`,
+				};
+
+				results.push({ url: pdfLink, metadata });
+			});
+
+			console.log(`✅ Found ${results.length} results on ArXiv`);
+			return results;
 		} catch (error) {
 			console.error("❌ ArXiv search failed:", error);
-			return null;
+			return [];
 		}
+	}
+
+	// Search for paper by title using ArXiv API (single result - for backwards compatibility)
+	async searchPaperOnArxiv(title: string): Promise<{ url: string; metadata: any } | null> {
+		const results = await this.searchPapersOnArxiv(title, 1);
+		return results.length > 0 ? results[0] : null;
 	}
 
 	// Search for paper using Semantic Scholar API (fallback)
@@ -533,17 +560,76 @@ export default class ObsiXivPlugin extends Plugin {
 
 	async extractPdfText(pdfFile: TFile): Promise<string> {
 		try {
-			// Get PDF as array buffer
+			// SOLUTION: Send PDF to Koog Agent for text extraction
+			// This completely avoids PDF.js conflicts with Obsidian
+			console.log("📤 Sending PDF to agent for text extraction...");
+			
 			const arrayBuffer = await this.app.vault.readBinary(pdfFile);
+			
+			// Convert to base64 for transmission
+			const base64 = this.arrayBufferToBase64(arrayBuffer);
+			
+			const response = await requestUrl({
+				url: `${this.settings.agentUrl}/api/v1/extract-pdf`,
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"X-API-Key": this.settings.apiKey,
+				},
+				body: JSON.stringify({
+					pdfBase64: base64,
+					filename: pdfFile.name
+				}),
+			});
 
-			// Use pdfjs-dist to extract text
-			const pdfjsLib = await this.loadPdfJs();
-			const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+			if (response.status !== 200) {
+				throw new Error(`Agent responded with status ${response.status}`);
+			}
+
+			const result = JSON.parse(response.text);
+			
+			if (!result.success || !result.text) {
+				throw new Error("Agent failed to extract PDF text");
+			}
+
+			console.log("✅ PDF text extracted by agent. Length:", result.text.length);
+			return result.text;
+			
+		} catch (error) {
+			console.error("❌ Agent extraction failed, falling back to local extraction:", error);
+			
+			// FALLBACK: Use local PDF.js extraction
+			// This may cause version conflicts but better than nothing
+			return await this.extractPdfTextLocal(pdfFile);
+		}
+	}
+
+	arrayBufferToBase64(buffer: ArrayBuffer): string {
+		const bytes = new Uint8Array(buffer);
+		let binary = '';
+		for (let i = 0; i < bytes.byteLength; i++) {
+			binary += String.fromCharCode(bytes[i]);
+		}
+		return btoa(binary);
+	}
+
+	async extractPdfTextLocal(pdfFile: TFile): Promise<string> {
+		// Local fallback using pdfjs-dist (may cause conflicts)
+		try {
+			const arrayBuffer = await this.app.vault.readBinary(pdfFile);
+			
+			// @ts-ignore
+			const pdfjsLib = await import("pdfjs-dist");
+			// @ts-ignore
+			const pdfjsWorker = await import("pdfjs-dist/build/pdf.worker.entry");
+			
+			// Just set worker and hope for the best
+			pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+			
+			const loadingTask = pdfjsLib.getDocument(arrayBuffer);
 			const pdf = await loadingTask.promise;
 
 			let fullText = "";
-
-			// Extract text from all pages
 			for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
 				const page = await pdf.getPage(pageNum);
 				const textContent = await page.getTextContent();
@@ -555,22 +641,9 @@ export default class ObsiXivPlugin extends Plugin {
 
 			return fullText;
 		} catch (error) {
-			console.error("Error extracting PDF text:", error);
+			console.error("Error extracting PDF text locally:", error);
 			throw new Error("Failed to extract text from PDF");
 		}
-	}
-
-	async loadPdfJs() {
-		// Dynamically import pdfjs-dist
-		// @ts-ignore
-		const pdfjsLib = await import("pdfjs-dist");
-
-		// Set worker path
-		// @ts-ignore
-		const pdfjsWorker = await import("pdfjs-dist/build/pdf.worker.entry");
-		pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
-
-		return pdfjsLib;
 	}
 
 	async askQuestion(pdfContent: string, question: string): Promise<string> {
@@ -791,6 +864,7 @@ generator: ObsiXiv
 
 class PaperSearchModal extends Modal {
 	plugin: ObsiXivPlugin;
+	results: Array<{ url: string; metadata: any }> = [];
 
 	constructor(app: App, plugin: ObsiXivPlugin) {
 		super(app);
@@ -822,6 +896,10 @@ class PaperSearchModal extends Modal {
 		const statusDiv = contentEl.createDiv("search-status");
 		statusDiv.style.cssText = "margin: 15px 0; min-height: 20px; color: var(--text-muted);";
 
+		// Results container (hidden initially)
+		const resultsContainer = contentEl.createDiv("search-results");
+		resultsContainer.style.cssText = "display: none; max-height: 400px; overflow-y: auto; border: 1px solid var(--background-modifier-border); border-radius: 5px; margin: 15px 0;";
+
 		// Buttons
 		const buttonsDiv = contentEl.createDiv("search-buttons");
 		buttonsDiv.style.cssText = "display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;";
@@ -830,7 +908,7 @@ class PaperSearchModal extends Modal {
 		cancelBtn.onclick = () => this.close();
 
 		const searchBtn = buttonsDiv.createEl("button", {
-			text: "Search & Generate",
+			text: "Search",
 			cls: "mod-cta",
 		});
 
@@ -844,51 +922,38 @@ class PaperSearchModal extends Modal {
 
 			input.disabled = true;
 			searchBtn.disabled = true;
-			cancelBtn.disabled = true;
+			resultsContainer.style.display = "none";
+			resultsContainer.empty();
 
 			try {
 				statusDiv.textContent = "🔍 Searching ArXiv...";
 				statusDiv.style.color = "var(--text-muted)";
 
-				// Try ArXiv first
-				let result = await this.plugin.searchPaperOnArxiv(title);
+				// Search ArXiv for multiple results
+				this.results = await this.plugin.searchPapersOnArxiv(title, 10);
 
-				// Fallback to Semantic Scholar
-				if (!result) {
-					statusDiv.textContent = "🔍 ArXiv not found, trying Semantic Scholar...";
-					result = await this.plugin.searchPaperOnSemanticScholar(title);
-				}
-
-				if (!result) {
-					statusDiv.textContent = "❌ Paper not found on ArXiv or Semantic Scholar";
+				if (this.results.length === 0) {
+					statusDiv.textContent = "❌ No papers found on ArXiv. Try a different search term.";
 					statusDiv.style.color = "var(--text-error)";
 					input.disabled = false;
 					searchBtn.disabled = false;
-					cancelBtn.disabled = false;
 					return;
 				}
 
-				statusDiv.textContent = `✅ Found: ${result.metadata.title}`;
+				statusDiv.textContent = `✅ Found ${this.results.length} result(s). Select one:`;
 				statusDiv.style.color = "var(--text-success)";
 
-				// Download PDF
-				statusDiv.textContent = "📥 Downloading PDF...";
-				const pdfFile = await this.plugin.downloadPdfFromUrl(
-					result.url,
-					result.metadata.title || title
-				);
+				// Display results
+				this.displayResults(resultsContainer);
+				resultsContainer.style.display = "block";
 
-				this.close();
-
-				// Generate blog post from downloaded PDF
-				await this.plugin.generateBlogPostFromPdf(pdfFile);
 			} catch (error) {
 				console.error("Search error:", error);
 				statusDiv.textContent = `❌ Error: ${error.message}`;
 				statusDiv.style.color = "var(--text-error)";
+			} finally {
 				input.disabled = false;
 				searchBtn.disabled = false;
-				cancelBtn.disabled = false;
 			}
 		};
 
@@ -901,6 +966,98 @@ class PaperSearchModal extends Modal {
 
 		// Focus input
 		setTimeout(() => input.focus(), 100);
+	}
+
+	displayResults(container: HTMLElement) {
+		container.empty();
+
+		this.results.forEach((result, index) => {
+			const resultDiv = container.createDiv("search-result-item");
+			resultDiv.style.cssText = `
+				padding: 15px;
+				margin: 10px;
+				border: 2px solid var(--background-modifier-border);
+				border-radius: 8px;
+				cursor: pointer;
+				transition: all 0.2s;
+			`;
+
+			// Title
+			const titleEl = resultDiv.createEl("div", {
+				text: result.metadata.title,
+			});
+			titleEl.style.cssText = "font-weight: bold; font-size: 15px; margin-bottom: 8px; color: var(--text-normal);";
+
+			// Authors
+			if (result.metadata.authors && result.metadata.authors.length > 0) {
+				const authorsText = result.metadata.authors.slice(0, 3).join(", ") +
+					(result.metadata.authors.length > 3 ? " et al." : "");
+				const authorsEl = resultDiv.createEl("div", { text: `👤 ${authorsText}` });
+				authorsEl.style.cssText = "font-size: 13px; color: var(--text-muted); margin-bottom: 5px;";
+			}
+
+			// Published date + ArXiv ID
+			const metaDiv = resultDiv.createDiv();
+			metaDiv.style.cssText = "font-size: 12px; color: var(--text-muted); margin-bottom: 8px;";
+			
+			if (result.metadata.published) {
+				const date = new Date(result.metadata.published);
+				metaDiv.createSpan({ text: `📅 ${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}` });
+			}
+			
+			if (result.metadata.arxivId) {
+				if (metaDiv.textContent) metaDiv.createSpan({ text: " • " });
+				metaDiv.createSpan({ text: `🔖 ${result.metadata.arxivId}` });
+			}
+
+			// Summary (truncated)
+			if (result.metadata.summary) {
+				const summary = result.metadata.summary.length > 200
+					? result.metadata.summary.substring(0, 200) + "..."
+					: result.metadata.summary;
+				const summaryEl = resultDiv.createEl("div", { text: summary });
+				summaryEl.style.cssText = "font-size: 13px; color: var(--text-faint); margin-top: 8px; line-height: 1.4;";
+			}
+
+			// Hover effect
+			resultDiv.onmouseenter = () => {
+				resultDiv.style.borderColor = "var(--interactive-accent)";
+				resultDiv.style.backgroundColor = "var(--background-secondary)";
+			};
+			resultDiv.onmouseleave = () => {
+				resultDiv.style.borderColor = "var(--background-modifier-border)";
+				resultDiv.style.backgroundColor = "transparent";
+			};
+
+			// Click to select
+			resultDiv.onclick = async () => {
+				await this.selectPaper(result);
+			};
+		});
+	}
+
+	async selectPaper(result: { url: string; metadata: any }) {
+		const statusDiv = this.contentEl.querySelector(".search-status") as HTMLElement;
+		
+		try {
+			statusDiv.textContent = `📥 Downloading: ${result.metadata.title.substring(0, 60)}...`;
+			statusDiv.style.color = "var(--text-muted)";
+
+			// Download PDF
+			const pdfFile = await this.plugin.downloadPdfFromUrl(
+				result.url,
+				result.metadata.title
+			);
+
+			this.close();
+
+			// Generate blog post from downloaded PDF
+			await this.plugin.generateBlogPostFromPdf(pdfFile);
+		} catch (error) {
+			console.error("Download error:", error);
+			statusDiv.textContent = `❌ Error: ${error.message}`;
+			statusDiv.style.color = "var(--text-error)";
+		}
 	}
 
 	onClose() {
@@ -1139,6 +1296,8 @@ class PdfChatModal extends Modal {
 			padding: 8px 12px;
 			border-radius: 8px;
 			position: relative;
+			user-select: text;
+			cursor: text;
 			${role === "user" ? "background: var(--interactive-accent); color: var(--text-on-accent); margin-left: 20%;" : ""}
 			${role === "assistant" ? "background: var(--background-secondary); margin-right: 20%;" : ""}
 			${role === "error" ? "background: var(--background-modifier-error); margin-right: 20%;" : ""}
@@ -1151,12 +1310,12 @@ class PdfChatModal extends Modal {
 		const roleSpan = headerDiv.createEl("div", {
 			text: role === "user" ? "You" : role === "assistant" ? "🤖 Assistant" : "⚠️ Error",
 		});
-		roleSpan.style.cssText = "font-size: 0.85em; opacity: 0.8;";
+		roleSpan.style.cssText = "font-size: 0.85em; opacity: 0.8; user-select: none;";
 
 		// Add copy button for assistant messages
 		if (role === "assistant") {
 			const copyButton = headerDiv.createEl("button", { text: "📋 Copy" });
-			copyButton.style.cssText = "padding: 2px 8px; font-size: 0.8em; border-radius: 4px; cursor: pointer; opacity: 0.7;";
+			copyButton.style.cssText = "padding: 2px 8px; font-size: 0.8em; border-radius: 4px; cursor: pointer; opacity: 0.7; user-select: none;";
 			copyButton.onclick = () => {
 				navigator.clipboard.writeText(content);
 				copyButton.textContent = "✅ Copied!";
@@ -1174,14 +1333,21 @@ class PdfChatModal extends Modal {
 
 		// Content div for markdown rendering
 		const contentDiv = messageDiv.createDiv("obsixiv-chat-content");
+		contentDiv.style.cssText = "user-select: text; cursor: text;";
 		
 		if (role === "user" || role === "error") {
 			// Simple text for user messages and errors
 			contentDiv.textContent = content;
+			contentDiv.style.cssText += " white-space: pre-wrap; word-wrap: break-word;";
 		} else {
 			// Render markdown for assistant messages
-			contentDiv.style.cssText = "line-height: 1.6;";
+			contentDiv.style.cssText += " line-height: 1.6;";
 			MarkdownRenderer.renderMarkdown(content, contentDiv, "", this.plugin);
+			
+			// Make sure all rendered elements are selectable
+			contentDiv.querySelectorAll('*').forEach((el: HTMLElement) => {
+				el.style.userSelect = 'text';
+			});
 		}
 
 		// Scroll to bottom
