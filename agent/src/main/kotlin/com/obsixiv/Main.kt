@@ -2,6 +2,7 @@ package com.obsixiv
 
 import com.obsixiv.routes.generateBlogPostRoute
 import com.obsixiv.routes.chatRoute
+import com.obsixiv.routes.extractPdfRoute
 import com.obsixiv.routes.healthCheckRoute
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
@@ -48,6 +49,7 @@ fun Application.configureRouting() {
             route("/api/v1") {
                 generateBlogPostRoute()
                 chatRoute()
+                extractPdfRoute()
                 healthCheckRoute()
             }
         }

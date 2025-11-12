@@ -239,21 +239,33 @@ cp main.js manifest.json styles.css /path/to/your/vault/.obsidian/plugins/obsixi
 
 ### What Gets Generated
 
-The plugin creates a Markdown file with:
+The plugin creates a Markdown file with **consistent structure across all posts**:
 
-- 🎯 **Catchy Title** with emojis
-- 📝 **TL;DR Section** - quick summary
-- 🎨 **Beautiful Formatting** - headers, lists, bold, quotes
-- 🧠 **Clear Explanations** - complex concepts in simple terms
-- 😂 **Humor & Fun** - memes, jokes, entertaining commentary
-- 🔍 **Structured Content**:
-  - What problem the paper solves
-  - Key innovations
-  - Results and their significance
-  - Limitations and future work
-- 💭 **Hot Takes** - insights and conclusions
+#### 📋 Standard Sections (always in this order):
+1. 🎯 **Title with emojis** + paper metadata
+2. 🔥 **TL;DR** - 2-3 sentence hook with key findings
+3. 🤔 **The Problem** - what current approaches lack
+4. 💡 **The Big Idea** - core innovation explained simply
+5. 🔧 **How It Works** - technical details broken down
+6. 🔢 **Key Formulas** - important math (if applicable)
+7. 📊 **Results That Matter** - quantitative results with exact numbers
+8. 🎨 **Why This Is Cool** - creative commentary & hot takes
+9. ⚠️ **Limitations & Caveats** - what to watch out for
+10. 🔮 **Future Directions** - where this could go
+11. 💭 **Final Thoughts** - impact on the field
+12. 🏷️ **Tags** - keywords for organization
+13. 📚 **Related Papers** - auto-discovered similar work
 
-**Example:** See [examples/example-output.md](examples/example-output.md)
+#### ✨ Consistent Style:
+- Same emoji for each section header across all posts
+- Bold for key terms and metrics
+- Tables for comparisons
+- Horizontal rules between sections
+- Exact numbers (not "good performance" but "**92.4% accuracy**")
+
+**See:** 
+- [examples/example-output.md](examples/example-output.md) - Example blog post
+- [BLOG_POST_STRUCTURE.md](BLOG_POST_STRUCTURE.md) - Detailed structure guide
 
 ---
 

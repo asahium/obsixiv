@@ -1,5 +1,7 @@
 package com.obsixiv.agent
 
+import com.obsixiv.models.PerplexityMessage
+import com.obsixiv.models.PerplexityRequest
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.engine.cio.*
@@ -86,42 +88,146 @@ class AlphaXivAgent {
         val emojiHumorInstructions = buildStyleInstructions(includeEmojis, includeHumor)
         
         val systemPrompt = """
-            You are an expert at writing engaging blog posts about academic papers.
+            You are an expert at writing engaging, consistent blog posts about academic papers in the AlphaXiv style.
             
             Style: $styleDesc
             $emojiHumorInstructions
             
-            CRITICAL REQUIREMENTS:
-            1. **Extract Key Results with Numbers**: Always include the main quantitative results, metrics, and performance numbers from the paper. Present them clearly with exact values (e.g., "achieved 95.2% accuracy", "reduced latency by 3.4x", "BLEU score of 42.8").
+            ═══════════════════════════════════════════════════════════════
+            📋 MANDATORY STRUCTURE - FOLLOW THIS EXACTLY FOR EVERY POST:
+            ═══════════════════════════════════════════════════════════════
             
-            2. **Include Important Formulas**: Identify and include the most important mathematical formulas from the paper. Format them in LaTeX/markdown math notation using $ for inline math and $$ for block equations. Explain what each formula means in simple terms.
+            # 🎯 [Creative Title with Emojis]
+            > **Paper**: [Exact Title] | **Authors**: [First Author et al.] | **Year**: [YYYY]
             
-            3. **Results Section**: Create a dedicated "📊 Key Results" or "🎯 Main Findings" section that summarizes:
-               - Baseline comparisons with numbers
-               - Performance metrics with exact values
-               - Statistical significance if mentioned
-               - Comparison tables (recreate as markdown tables)
+            ---
             
-            4. **Formulas Section**: If the paper has important equations, include a "🔢 Key Formulas" section explaining:
-               - What each formula does
-               - What the variables mean
-               - Why it's important
+            ## 🔥 TL;DR
+            [2-3 sentences. Hook the reader with the most exciting finding. Use bold for key terms.]
             
-            Example format:
-            ## 🎯 Main Results
-            - Model achieved **92.4% accuracy** on ImageNet (vs 89.1% baseline)
-            - Training time reduced by **3.2x** (from 48h to 15h)
-            - F1 score: **0.876** (state-of-the-art)
+            ---
             
-            ## 🔢 Key Formula
-            The attention mechanism is computed as:
+            ## 🤔 The Problem
+            [Explain what sucks about current approaches. Make it relatable. 3-4 sentences.]
             
-            $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V$$
+            **Why this matters:** [1 sentence on real-world impact]
             
-            Where Q (query), K (key), V (value) are learned projections, and d_k is the dimension scaling factor.$customInstructions
+            ---
+            
+            ## 💡 The Big Idea
+            [Core innovation explained simply. Use analogies. 4-5 sentences.]
+            
+            **In other words:** [One-line ELI5 explanation]
+            
+            ---
+            
+            ## 🔧 How It Works
+            [Technical details broken down into digestible chunks. Use numbered lists or bullet points.]
+            
+            **Key Components:**
+            1. **[Component 1]**: [What it does]
+            2. **[Component 2]**: [What it does]
+            3. **[Component 3]**: [What it does]
+            
+            ---
+            
+            ## 🔢 Key Formulas (if applicable)
+            [ONLY if paper has important math. Show 1-2 most critical formulas.]
+            
+            $$[Formula in LaTeX]$$
+            
+            **Translation:** [What this means in plain English]
+            - **[Variable]**: [What it represents]
+            
+            ---
+            
+            ## 📊 Results That Matter
+            [Quantitative results with exact numbers. Use tables or bullet points.]
+            
+            | Metric | Baseline | This Paper | Improvement |
+            |--------|----------|------------|-------------|
+            | [Metric 1] | [X] | [Y] | **+Z%** ✨ |
+            | [Metric 2] | [X] | [Y] | **+Z%** 🚀 |
+            
+            **Key Takeaway:** [One sentence on what these numbers mean]
+            
+            ---
+            
+            ## 🎨 Why This Is Cool
+            [Creative commentary. Memes, analogies, hot takes. 3-4 sentences. Be entertaining.]
+            
+            ---
+            
+            ## ⚠️ Limitations & Caveats
+            - **[Limitation 1]**: [Why it matters]
+            - **[Limitation 2]**: [Why it matters]
+            
+            ---
+            
+            ## 🔮 Future Directions
+            [What's next? Where could this go? 2-3 bullets.]
+            
+            ---
+            
+            ## 💭 Final Thoughts
+            [Your hot take. What does this mean for the field? 2-3 sentences. End with impact.]
+            
+            ---
+            
+            **Tags:** #[Keyword1] #[Keyword2] #[Keyword3] #[Field] #ML #AI
+            
+            ═══════════════════════════════════════════════════════════════
+            🎨 STYLE GUIDELINES - APPLY TO EVERY SECTION:
+            ═══════════════════════════════════════════════════════════════
+            
+            **Emojis Usage:**
+            - Title: 1-2 relevant emojis
+            - Section headers: ALWAYS use the exact emojis shown above
+            - In-text: Sprinkle throughout (🚀 for improvements, ✨ for highlights, 💪 for strength, 🤔 for questions, 😅 for humor)
+            - Results: Use ✅ for success, 📈 for growth, 🎯 for targets
+            
+            **Formatting Rules:**
+            - Use **bold** for all key terms, metrics, and important phrases
+            - Use *italics* for emphasis or quotes
+            - Use `code formatting` for technical terms, variable names, model names
+            - Use > blockquotes for important takeaways
+            - Use --- for section dividers (horizontal rules)
+            - Use tables for comparisons (always include headers)
+            
+            **Tone Consistency:**
+            - Enthusiastic but not annoying
+            - Accessible but technically accurate
+            - Humorous but respectful to authors
+            - Critical but constructive
+            
+            **Number Formatting:**
+            - Always include exact numbers: "92.4% accuracy" not "high accuracy"
+            - Show improvements: "3.2x faster" or "+15.3% improvement"
+            - Use bold for impressive numbers: **92.4%**
+            
+            **Lists:**
+            - Use numbered lists for sequential steps
+            - Use bullet points for parallel items
+            - Maximum 5-7 items per list
+            - Each item starts with **bold term**: followed by explanation
+            
+            ═══════════════════════════════════════════════════════════════
+            ⚠️ CRITICAL REQUIREMENTS:
+            ═══════════════════════════════════════════════════════════════
+            
+            1. **ALWAYS** follow the structure above, in that exact order
+            2. **ALWAYS** include quantitative results with exact numbers
+            3. **ALWAYS** use the specified emojis for each section header
+            4. **ALWAYS** include horizontal rules (---) between major sections
+            5. **ALWAYS** end with tags
+            6. **NEVER** skip sections (except 🔢 Key Formulas if no math)
+            7. **NEVER** use generic phrases like "impressive results" - give numbers!
+            8. **NEVER** forget the metadata quote block at the top
+            
+            $customInstructions
         """.trimIndent()
         
-        val prompt = buildPrompt(pdfContent, emojiHumorInstructions)
+        val prompt = buildPrompt(pdfContent)
         
         // Determine API based on key prefix
         return when {
@@ -133,33 +239,40 @@ class AlphaXivAgent {
     }
     
     private suspend fun generateWithPerplexity(apiKey: String, systemPrompt: String, prompt: String, temperature: Double): String {
-        val escapedSystemPrompt = systemPrompt.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
-        val escapedPrompt = prompt.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
-        
-        val requestBody = """
-            {
-                "model": "sonar-pro",
-                "messages": [
-                    {"role": "system", "content": "$escapedSystemPrompt"},
-                    {"role": "user", "content": "$escapedPrompt"}
-                ],
-                "temperature": $temperature,
-                "max_tokens": 4000
-            }
-        """.trimIndent()
+        // Use proper serialization instead of manual JSON construction
+        val request = PerplexityRequest(
+            model = "sonar-pro",
+            messages = listOf(
+                PerplexityMessage(role = "system", content = systemPrompt),
+                PerplexityMessage(role = "user", content = prompt)
+            ),
+            temperature = temperature,
+            max_tokens = 4000
+        )
         
         val response = client.post("https://api.perplexity.ai/chat/completions") {
             header("Authorization", "Bearer $apiKey")
             contentType(ContentType.Application.Json)
-            setBody(requestBody)
+            setBody(request)
         }
         
         val responseText: String = response.body()
+        println("🔍 Perplexity response: ${responseText.take(500)}")
+        
         val json = Json.parseToJsonElement(responseText).jsonObject
+        println("📦 Parsed JSON keys: ${json.keys}")
+        
         val choices = json["choices"]?.jsonArray
+        println("📋 Choices count: ${choices?.size}")
+        
         val firstChoice = choices?.firstOrNull()?.jsonObject
+        println("🎯 First choice keys: ${firstChoice?.keys}")
+        
         val message = firstChoice?.get("message")?.jsonObject
+        println("💬 Message keys: ${message?.keys}")
+        
         val content = message?.get("content")?.jsonPrimitive?.content
+        println("✍️ Content length: ${content?.length ?: 0}")
         
         return content ?: throw Exception("Empty response from Perplexity")
     }
@@ -258,7 +371,7 @@ class AlphaXivAgent {
         return instructions.joinToString(". ")
     }
     
-    private fun buildPrompt(pdfContent: String, styleInstructions: String): String {
+    private fun buildPrompt(pdfContent: String): String {
         val truncatedContent = if (pdfContent.length > 60000) {
             pdfContent.substring(0, 60000) + "\n\n[... content truncated ...]"
         } else {
@@ -266,38 +379,24 @@ class AlphaXivAgent {
         }
         
         return """
-            You are an expert at writing engaging, humorous, and informative blog posts about academic papers 
-            in the style of AlphaXiv. Your posts should be entertaining, accessible, and include creative 
-            commentary, memes references, and emojis.
+            Please read this academic paper and generate a blog post following the EXACT structure and style guidelines provided in the system prompt.
             
-            $styleInstructions
-            
-            Please read this academic paper and generate an engaging AlphaXiv-style blog post about it.
-            
-            The blog post should include:
-            1. A catchy title with emojis
-            2. A TL;DR section that summarizes the key findings in simple terms
-            3. An introduction that hooks the reader
-            4. Main sections covering:
-               - What problem the paper solves
-               - The key innovation/approach
-               - Results and why they matter
-               - Limitations and future work
-            5. A conclusion with your hot takes
-            6. Use Markdown formatting extensively (headers, bold, italics, lists, quotes)
-            7. Include creative commentary and make it entertaining to read
-            8. Add section dividers and visual breaks
-            9. Keep technical accuracy but make it accessible
-            
-            Here's the paper content:
-            
-            ---
+            📄 PAPER CONTENT:
             
             $truncatedContent
             
-            ---
+            ═══════════════════════════════════════════════════════════════
             
-            Generate the blog post in Markdown format:
+            Now generate the blog post in Markdown format, following ALL structure requirements, emoji usage, and formatting rules specified above.
+            
+            Remember:
+            - Use the EXACT section headers with their emojis (🔥 TL;DR, 🤔 The Problem, etc.)
+            - Include quantitative results with exact numbers
+            - Add horizontal rules (---) between sections
+            - Include the metadata quote block at the top
+            - End with tags
+            
+            Begin the blog post now:
         """.trimIndent()
     }
 }

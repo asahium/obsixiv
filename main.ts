@@ -1222,10 +1222,10 @@ class PaperSearchModal extends Modal {
 
 			this.close();
 
-			// Open PDF immediately so user can read while blog generates
-			const leaf = this.plugin.app.workspace.getLeaf('split', 'vertical');
+			// Open PDF in the current active tab so user can read while blog generates
+			const leaf = this.plugin.app.workspace.getLeaf(false);
 			await leaf.openFile(pdfFile);
-			console.log("✅ PDF opened, starting blog generation...");
+			console.log("✅ PDF opened in active tab, starting blog generation...");
 
 			// Generate blog post from downloaded PDF (runs in background while user reads)
 			await this.plugin.generateBlogPostFromPdf(pdfFile);

@@ -33,6 +33,9 @@ dependencies {
     // Logging
     implementation("ch.qos.logback:logback-classic:1.4.11")
     
+    // PDF processing
+    implementation("org.apache.pdfbox:pdfbox:2.0.30")
+    
     // Testing
     testImplementation(kotlin("test"))
 }

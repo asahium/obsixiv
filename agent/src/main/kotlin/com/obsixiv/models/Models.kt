@@ -32,3 +32,30 @@ data class ChatResponse(
     val success: Boolean
 )
 
+@Serializable
+data class ExtractPdfRequest(
+    val pdfBase64: String,
+    val filename: String = "document.pdf"
+)
+
+@Serializable
+data class ExtractPdfResponse(
+    val text: String,
+    val success: Boolean,
+    val error: String? = null
+)
+
+@Serializable
+data class PerplexityRequest(
+    val model: String,
+    val messages: List<PerplexityMessage>,
+    val temperature: Double,
+    val max_tokens: Int
+)
+
+@Serializable
+data class PerplexityMessage(
+    val role: String,
+    val content: String
+)
+

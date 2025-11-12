@@ -1,15 +1,16 @@
 package com.obsixiv.routes
 
 import com.obsixiv.agent.AlphaXivAgent
-import com.obsixiv.models.GenerateBlogPostRequest
-import com.obsixiv.models.GenerateBlogPostResponse
-import com.obsixiv.models.ChatRequest
-import com.obsixiv.models.ChatResponse
+import com.obsixiv.models.*
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import org.apache.pdfbox.pdmodel.PDDocument
+import org.apache.pdfbox.text.PDFTextStripper
+import java.io.ByteArrayInputStream
+import java.util.Base64
 
 fun Route.generateBlogPostRoute() {
     val agent = AlphaXivAgent()
@@ -94,6 +95,44 @@ fun Route.chatRoute() {
             e.printStackTrace()
             call.respond(HttpStatusCode.InternalServerError, mapOf(
                 "error" to "Failed to answer question: ${e.message}"
+            ))
+        }
+    }
+}
+
+fun Route.extractPdfRoute() {
+    post("/extract-pdf") {
+        try {
+            println("📄 Received PDF extraction request")
+            val request = call.receive<ExtractPdfRequest>()
+            println("✅ Request parsed. Filename: ${request.filename}")
+            
+            // Decode base64 PDF
+            val pdfBytes = Base64.getDecoder().decode(request.pdfBase64)
+            println("📥 Decoded PDF. Size: ${pdfBytes.size} bytes")
+            
+            // Extract text using PDFBox
+            val text = ByteArrayInputStream(pdfBytes).use { inputStream ->
+                PDDocument.load(inputStream).use { document ->
+                    val stripper = PDFTextStripper()
+                    val extractedText = stripper.getText(document)
+                    println("✅ Extracted ${extractedText.length} characters from ${document.numberOfPages} pages")
+                    extractedText
+                }
+            }
+            
+            call.respond(HttpStatusCode.OK, ExtractPdfResponse(
+                text = text,
+                success = true
+            ))
+            
+        } catch (e: Exception) {
+            println("❌ ERROR: ${e.javaClass.simpleName}: ${e.message}")
+            e.printStackTrace()
+            call.respond(HttpStatusCode.InternalServerError, ExtractPdfResponse(
+                text = "",
+                success = false,
+                error = "Failed to extract PDF text: ${e.message}"
             ))
         }
     }
