@@ -4,7 +4,7 @@ main.js
 
 # npm
 node_modules
-package-lock.json
+# package-lock.json is needed for CI/CD
 
 # Don't include the compiled main.js file in the repo.
 # They should be uploaded to GitHub releases instead.
