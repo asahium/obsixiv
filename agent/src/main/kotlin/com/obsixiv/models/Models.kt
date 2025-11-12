@@ -3,13 +3,27 @@ package com.obsixiv.models
 import kotlinx.serialization.Serializable
 
 @Serializable
+data class ArxivMetadata(
+    val arxivId: String? = null,
+    val title: String? = null,
+    val authors: List<String>? = null,
+    val summary: String? = null,
+    val published: String? = null,
+    val updated: String? = null,
+    val categories: List<String>? = null,
+    val url: String? = null
+)
+
+@Serializable
 data class GenerateBlogPostRequest(
     val pdfContent: String,
     val temperature: Double = 0.8,
     val includeEmojis: Boolean = true,
     val includeHumor: Boolean = true,
     val customPrompt: String = "",
-    val writingStyle: String = "alphaxiv"
+    val writingStyle: String = "alphaxiv",
+    val arxivMetadata: ArxivMetadata? = null,
+    val extractedImages: List<String> = emptyList()
 )
 
 @Serializable

@@ -13,7 +13,7 @@ import {
 	normalizePath,
 	requestUrl,
 } from "obsidian";
-import { unzlibSync } from "fflate";
+import { gunzipSync } from "fflate";
 
 interface ObsiXivSettings {
 	apiKey: string;
@@ -725,7 +725,7 @@ export default class ObsiXivPlugin extends Plugin {
 					console.log("🌐 Agent URL:", this.settings.agentUrl);
 
 					// Generate blog post using Koog Agent
-					blogPost = await this.generateBlogPostWithKoogAgent(pdfContent, metadata);
+					blogPost = await this.generateBlogPostWithKoogAgent(pdfContent, metadata, extractedImages);
 					console.log("✅ Blog post received! Length:", blogPost.length);
 					
 					// Save to cache
@@ -752,7 +752,7 @@ export default class ObsiXivPlugin extends Plugin {
 				console.log("🌐 Agent URL:", this.settings.agentUrl);
 
 				// Generate blog post using Koog Agent
-				blogPost = await this.generateBlogPostWithKoogAgent(pdfContent, metadata);
+				blogPost = await this.generateBlogPostWithKoogAgent(pdfContent, metadata, extractedImages);
 				console.log("✅ Blog post received! Length:", blogPost.length);
 			}
 
@@ -874,7 +874,7 @@ export default class ObsiXivPlugin extends Plugin {
 			
 			try {
 				// Try gzip decompression
-				tarBytes = unzlibSync(gzipBytes);
+				tarBytes = gunzipSync(gzipBytes);
 				console.log("✅ Gzip decompressed");
 			} catch (gzipError) {
 				// Not gzipped - use as plain tar
@@ -1062,7 +1062,9 @@ export default class ObsiXivPlugin extends Plugin {
 				return [];
 			}
 
-			console.log(`🖼️ Found ${allImageRefs.length} image references`);
+			// Remove duplicates
+			const uniqueImageRefs = [...new Set(allImageRefs)];
+			console.log(`🖼️ Found ${allImageRefs.length} image references (${uniqueImageRefs.length} unique)`);
 
 			// Step 4: Create assets folder
 			await this.ensureAssetsFolder(paperName);
@@ -1070,7 +1072,7 @@ export default class ObsiXivPlugin extends Plugin {
 
 			// Step 5: Copy images from archive to assets folder
 			const copiedImages: string[] = [];
-			for (const imageRef of allImageRefs) {
+			for (const imageRef of uniqueImageRefs) {
 				// Normalize image path
 				const imageName = imageRef.split('/').pop() || imageRef;
 				
@@ -1098,9 +1100,20 @@ export default class ObsiXivPlugin extends Plugin {
 						const isImportant = this.isImportantFigure(imageName);
 						
 						const imagePath = normalizePath(`${assetsFolder}/${imageName}`);
-						await this.app.vault.createBinary(imagePath, imageData);
-						copiedImages.push(imageName);
-						console.log(`  ${isImportant ? '⭐' : '✅'} Copied: ${imageName}${isImportant ? ' (important)' : ''}`);
+						
+						try {
+							// Check if file already exists
+							const existingFile = this.app.vault.getAbstractFileByPath(imagePath);
+							if (existingFile) {
+								console.log(`  ⏭️ Skip: ${imageName} (already exists)`);
+							} else {
+								await this.app.vault.createBinary(imagePath, imageData);
+								copiedImages.push(imageName);
+								console.log(`  ${isImportant ? '⭐' : '✅'} Copied: ${imageName}${isImportant ? ' (important)' : ''}`);
+							}
+						} catch (error) {
+							console.error(`  ❌ Error copying ${imageName}:`, error);
+						}
 					}
 				}
 			}
@@ -1225,7 +1238,7 @@ export default class ObsiXivPlugin extends Plugin {
 		}
 	}
 
-	async generateBlogPostWithKoogAgent(pdfContent: string, metadata?: any): Promise<string> {
+	async generateBlogPostWithKoogAgent(pdfContent: string, metadata?: any, extractedImages?: string[]): Promise<string> {
 		try {
 			console.log("📡 Sending request to agent...");
 			const requestBody = {
@@ -1236,6 +1249,7 @@ export default class ObsiXivPlugin extends Plugin {
 				customPrompt: this.settings.customPrompt,
 				writingStyle: this.settings.writingStyle,
 				arxivMetadata: metadata || undefined,
+				extractedImages: extractedImages || [],
 			};
 			console.log("📦 Request body size:", JSON.stringify(requestBody).length);
 			
@@ -1304,73 +1318,35 @@ export default class ObsiXivPlugin extends Plugin {
 			header += `---\n\n`;
 		}
 
-		// Insert images into blog post if available
+		// Fix image paths in blog post to point to correct figures folder
 		if (extractedImages.length > 0) {
 			// Use relative path from blog post to figures folder
 			const figuresFolderName = `${sanitizedName}_figures`;
 			
-			// Separate important and other images
-			const importantImages = extractedImages.filter(img => this.isImportantFigure(img));
-			const otherImages = extractedImages.filter(img => !this.isImportantFigure(img));
+			console.log(`🎨 Found ${extractedImages.length} extracted images, fixing paths in blog post...`);
 			
-			console.log(`🎨 Found ${importantImages.length} important images, ${otherImages.length} other images`);
+			// Replace various possible patterns:
+			// 1. ![[Text|$figuresFolderName/file.ext]] -> ![[figuresFolderName/file.ext]]
+			blogPost = blogPost.replace(/!\[\[([^\]]*?)\|\$figuresFolderName\/([^\]]+)\]\]/g, `![[${figuresFolderName}/$2]]`);
 			
-			// Try to insert important images after specific sections
-			const sectionsToTryInsert = [
-				{ pattern: /## 🎨 Architecture\n\n/, name: 'Architecture' },
-				{ pattern: /## 🔧 How It Works\n\n/, name: 'How It Works' },
-				{ pattern: /## 💡 The Big Idea\n\n/, name: 'The Big Idea' },
-				{ pattern: /## 📊 Results That Matter\n\n/, name: 'Results' }
-			];
-
-			let imagesInserted = false;
+			// 2. ![Text](figures_folder/file.ext) -> ![[figuresFolderName/file.ext]]
+			blogPost = blogPost.replace(/!\[([^\]]*)\]\(figures_folder\/([^)]+)\)/g, `![[${figuresFolderName}/$2]]`);
 			
-			// Only insert important images in the main sections
-			if (importantImages.length > 0) {
-				for (const section of sectionsToTryInsert) {
-					if (section.pattern.test(blogPost)) {
-						// Build image gallery with only important images
-						let imageGallery = '\n\n';
-						for (const imageName of importantImages.slice(0, 3)) { // Max 3 important images
-							imageGallery += `![[${figuresFolderName}/${imageName}]]\n\n`;
-						}
-						
-						// Insert after the section header
-						blogPost = blogPost.replace(section.pattern, (match) => {
-							console.log(`⭐ Inserted ${Math.min(importantImages.length, 3)} important images after ${section.name} section`);
-							return match + imageGallery;
-						});
-						imagesInserted = true;
-						break;
-					}
-				}
+			// 3. ![[Text|figures_folder/file.ext]] -> ![[figuresFolderName/file.ext]]
+			blogPost = blogPost.replace(/!\[\[([^\]]*?)\|figures_folder\/([^\]]+)\]\]/g, `![[${figuresFolderName}/$2]]`);
+			
+			// 4. ![[figures_folder/file.ext]] -> ![[figuresFolderName/file.ext]]
+			blogPost = blogPost.replace(/!\[\[figures_folder\/([^\]]+)\]\]/g, `![[${figuresFolderName}/$1]]`);
+			
+			// 5. Also handle if model used direct filenames
+			for (const imageName of extractedImages) {
+				const escapedImageName = imageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+				// Match any image reference with this filename and fix it
+				const imgRegex = new RegExp(`!\\[([^\\]]*)\\]\\(${escapedImageName}\\)`, 'g');
+				blogPost = blogPost.replace(imgRegex, `![[${figuresFolderName}/${imageName}]]`);
 			}
-
-			// If no suitable section found or no important images, add all as separate section
-			if (!imagesInserted && extractedImages.length > 0) {
-				console.log(`🖼️ Adding all ${extractedImages.length} images as separate section`);
-				let imageSection = `\n\n## 🖼️ Key Figures\n\n`;
-				
-				// Show important images first
-				for (const imageName of importantImages.slice(0, 5)) {
-					imageSection += `![[${figuresFolderName}/${imageName}]]\n\n`;
-				}
-				
-				// Then show a few other images
-				if (otherImages.length > 0) {
-					imageSection += `\n**Additional Figures:**\n\n`;
-					for (const imageName of otherImages.slice(0, 3)) {
-						imageSection += `![[${figuresFolderName}/${imageName}]]\n\n`;
-					}
-				}
-				
-				// Insert before Related Papers section
-				if (blogPost.includes('## 📚 Related Papers')) {
-					blogPost = blogPost.replace(/\n\n---\n\n## 📚 Related Papers/, imageSection + '\n\n---\n\n## 📚 Related Papers');
-				} else {
-					blogPost += imageSection;
-				}
-			}
+			
+			console.log(`✅ Image paths fixed to use ${figuresFolderName}/`);
 		}
 
 		// Extract keywords from the blog post for similarity matching

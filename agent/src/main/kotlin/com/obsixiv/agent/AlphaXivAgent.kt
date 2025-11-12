@@ -74,7 +74,8 @@ class AlphaXivAgent {
         includeEmojis: Boolean = true,
         includeHumor: Boolean = true,
         customPrompt: String = "",
-        writingStyle: String = "alphaxiv"
+        writingStyle: String = "alphaxiv",
+        extractedImages: List<String> = emptyList()
     ): String {
         // Build style instructions based on writing style
         val styleDesc = when(writingStyle) {
@@ -231,7 +232,7 @@ class AlphaXivAgent {
             $customInstructions
         """.trimIndent()
         
-        val prompt = buildPrompt(pdfContent)
+        val prompt = buildPrompt(pdfContent, extractedImages)
         
         // Determine API based on key format
         return when {
@@ -425,11 +426,46 @@ class AlphaXivAgent {
         return instructions.joinToString(". ")
     }
     
-    private fun buildPrompt(pdfContent: String): String {
+    private fun buildPrompt(pdfContent: String, extractedImages: List<String> = emptyList()): String {
         val truncatedContent = if (pdfContent.length > 60000) {
             pdfContent.substring(0, 60000) + "\n\n[... content truncated ...]"
         } else {
             pdfContent
+        }
+        
+        val imageSection = if (extractedImages.isNotEmpty()) {
+            val imageList = extractedImages.joinToString("\n") { "  - $it" }
+            """
+            
+            🖼️ AVAILABLE FIGURES (extracted from LaTeX source):
+            
+            $imageList
+            
+            **CRITICAL INSTRUCTIONS FOR USING FIGURES:**
+            
+            ⚠️ **SYNTAX:** Use EXACTLY this format: ![[figures_folder/EXACT_FILENAME]]
+            
+            ✅ CORRECT Examples:
+              - ![[figures_folder/framework.pdf]]
+              - ![[figures_folder/architecture_diagram.png]]
+              - ![[figures_folder/results_table.pdf]]
+            
+            ❌ WRONG Examples:
+              - ![Description|figures_folder/file.jpg]  ← NO alt text syntax!
+              - ![[Text|figures_folder/file.jpg]]  ← NO pipe character!
+              - ![[figures_folder/file.jpg]]  ← Must use .pdf if file is .pdf!
+            
+            **RULES:**
+            1. **Use EXACT filenames** from the list above - DO NOT change file extensions!
+            2. **Select 2-4 most important figures** - prioritize: architecture, model, results, framework, comparison
+            3. **Simple syntax only:** ![[figures_folder/exact_filename.ext]]
+            4. **Place contextually** in relevant sections (after section headers)
+            5. **NO alt text, NO descriptions inside brackets** - keep it clean and simple
+            6. If the original file is .pdf, keep .pdf - if .png, keep .png - DO NOT change extensions!
+            
+            """.trimIndent()
+        } else {
+            ""
         }
         
         return """
@@ -438,6 +474,7 @@ class AlphaXivAgent {
             📄 PAPER CONTENT:
             
             $truncatedContent
+            $imageSection
             
             ═══════════════════════════════════════════════════════════════
             
