@@ -40,7 +40,8 @@ fun Route.generateBlogPostRoute() {
                 includeEmojis = request.includeEmojis,
                 includeHumor = request.includeHumor,
                 customPrompt = request.customPrompt,
-                writingStyle = request.writingStyle
+                writingStyle = request.writingStyle,
+                extractedImages = request.extractedImages
             )
             
             println("✅ Blog post generated! Length: ${blogPost.length}")
