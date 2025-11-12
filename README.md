@@ -30,9 +30,17 @@ An Obsidian plugin that generates AlphaXiv-style blog posts from PDF papers usin
 ## ✨ Features
 
 - 📄 **PDF Text Extraction** - Automatically extracts content from academic papers
+- 🔍 **Paper Search** - Search by title on ArXiv and Semantic Scholar
+- 📥 **Auto Download** - Automatically downloads and processes papers
 - 🤖 **Kotlin AI Agent** - Backend service with direct Claude API integration
 - 🎨 **AlphaXiv Style** - Generates fun, informative, and accessible blog posts
 - 😄 **Emojis & Humor** - Adds jokes, memes, and entertaining commentary
+- 🔗 **Related Papers** - Automatically finds and lists similar work
+- 💬 **PDF Chat** - Ask questions about any paper with Markdown support
+- 📚 **Batch Processing** - Process multiple PDFs at once
+- 🎯 **Custom Prompts & Styles** - Technical, casual, academic, or AlphaXiv
+- 💾 **Smart Caching** - Faster re-generation of blog posts
+- 🔌 **MCP Integration** - Use with Claude Desktop and other MCP clients
 - ⚙️ **Flexible Settings** - Customize temperature and generation style
 - 🐳 **Docker Support** - Easy deployment with Docker
 - 🚀 **One-Click Setup** - Just add your API key and go!
@@ -286,6 +294,11 @@ obsixiv/
 │   ├── Dockerfile              # Docker image
 │   └── docker-compose.yml      # Docker Compose
 │
+├── 📂 mcp-server/              # MCP Server (for Claude Desktop)
+│   ├── src/                    # TypeScript source
+│   ├── package.json            # Dependencies
+│   └── README.md               # MCP setup guide
+│
 ├── 📂 scripts/                 # Automation Scripts
 │   ├── start-agent.sh          # Start agent (Unix)
 │   ├── start-agent.bat         # Start agent (Windows)
@@ -306,8 +319,7 @@ obsixiv/
 │   ├── styles.css              # Custom styles
 │   └── ...                     # Config files
 │
-├── README.md                   # This file (English)
-└── README.ru.md                # Russian version
+└── README.md                   # This file (English)
 ```
 
 ---
@@ -443,6 +455,39 @@ Yes! Adjust temperature, toggle emojis and humor in settings. Custom prompts are
 
 ---
 
+## 🔌 MCP Integration (Claude Desktop)
+
+ObsiXiv includes an MCP server for integration with Claude Desktop and other MCP clients!
+
+### What is MCP?
+
+Model Context Protocol (MCP) allows AI assistants like Claude to use external tools. With ObsiXiv MCP, Claude can:
+- 🔍 Search for papers by title
+- 📝 Generate blog posts from paper content
+- 🔗 Find related papers
+
+### Setup
+
+See **[mcp-server/README.md](mcp-server/README.md)** for detailed instructions.
+
+Quick start:
+```bash
+cd mcp-server
+npm install
+npm run build
+
+# Add to Claude Desktop config:
+# ~/Library/Application Support/Claude/claude_desktop_config.json
+```
+
+### Example with Claude Desktop
+
+> **You:** "Search for the paper 'Attention Is All You Need' and generate a blog post"
+>
+> **Claude:** *Uses `search_paper` tool → downloads PDF → uses `generate_blog` tool → returns formatted blog post*
+
+---
+
 ## 🎯 Roadmap
 
 - [x] ~~Support more AI providers~~ ✅ (Perplexity, Claude, OpenAI)
@@ -453,6 +498,9 @@ Yes! Adjust temperature, toggle emojis and humor in settings. Custom prompts are
 - [x] ~~Caching for faster re-generation~~ ✅
 - [x] ~~PDF Chat feature~~ ✅
 - [x] ~~Extract key results and formulas~~ ✅
+- [x] ~~Paper search by title~~ ✅
+- [x] ~~Related papers discovery~~ ✅
+- [x] ~~MCP server integration~~ ✅
 - [ ] Image extraction from PDFs (tables, figures)
 - [ ] Export to HTML/PDF
 - [ ] Support for local LLMs
