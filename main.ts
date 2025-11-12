@@ -596,11 +596,11 @@ export default class ObsiXivPlugin extends Plugin {
 			return result.text;
 			
 		} catch (error) {
-			console.error("❌ Agent extraction failed, falling back to local extraction:", error);
+			console.error("❌ Agent extraction failed:", error);
 			
-			// FALLBACK: Use local PDF.js extraction
-			// This may cause version conflicts but better than nothing
-			return await this.extractPdfTextLocal(pdfFile);
+			// No fallback to local extraction to avoid PDF.js version conflicts with Obsidian
+			new Notice("⚠️ Failed to extract PDF. Make sure Koog Agent is running.");
+			throw new Error(`PDF extraction failed: ${error.message}. Please ensure Koog Agent is running at ${this.settings.agentUrl}`);
 		}
 	}
 
@@ -611,39 +611,6 @@ export default class ObsiXivPlugin extends Plugin {
 			binary += String.fromCharCode(bytes[i]);
 		}
 		return btoa(binary);
-	}
-
-	async extractPdfTextLocal(pdfFile: TFile): Promise<string> {
-		// Local fallback using pdfjs-dist (may cause conflicts)
-		try {
-			const arrayBuffer = await this.app.vault.readBinary(pdfFile);
-			
-			// @ts-ignore
-			const pdfjsLib = await import("pdfjs-dist");
-			// @ts-ignore
-			const pdfjsWorker = await import("pdfjs-dist/build/pdf.worker.entry");
-			
-			// Just set worker and hope for the best
-			pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
-			
-			const loadingTask = pdfjsLib.getDocument(arrayBuffer);
-			const pdf = await loadingTask.promise;
-
-			let fullText = "";
-			for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-				const page = await pdf.getPage(pageNum);
-				const textContent = await page.getTextContent();
-				const pageText = textContent.items
-					.map((item: any) => item.str)
-					.join(" ");
-				fullText += pageText + "\n\n";
-			}
-
-			return fullText;
-		} catch (error) {
-			console.error("Error extracting PDF text locally:", error);
-			throw new Error("Failed to extract text from PDF");
-		}
 	}
 
 	async askQuestion(pdfContent: string, question: string): Promise<string> {
