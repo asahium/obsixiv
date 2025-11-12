@@ -888,7 +888,15 @@ class PaperSearchModal extends Modal {
 		contentEl.empty();
 		contentEl.addClass("obsixiv-search-modal");
 
-		contentEl.createEl("h2", { text: "🔍 Search Paper by Title" });
+		// Header with icon
+		const headerDiv = contentEl.createDiv();
+		headerDiv.style.cssText = "display: flex; align-items: center; gap: 10px; margin-bottom: 10px;";
+		
+		const iconSpan = headerDiv.createEl("span", { text: "🔍" });
+		iconSpan.style.cssText = "font-size: 24px;";
+		
+		const titleEl = headerDiv.createEl("h2", { text: "Search Paper by Title" });
+		titleEl.style.cssText = "margin: 0;";
 
 		contentEl.createEl("p", {
 			text: "Enter the title of the academic paper you want to find:",
@@ -902,7 +910,7 @@ class PaperSearchModal extends Modal {
 			type: "text",
 			placeholder: "e.g., Attention Is All You Need",
 		});
-		input.style.cssText = "width: 100%; padding: 10px; font-size: 14px; border: 1px solid var(--background-modifier-border); border-radius: 5px;";
+		input.style.cssText = "width: 100%; padding: 10px 12px; font-size: 14px; border: 1px solid var(--background-modifier-border); border-radius: 5px; box-sizing: border-box;";
 
 		// Status message
 		const statusDiv = contentEl.createDiv("search-status");
