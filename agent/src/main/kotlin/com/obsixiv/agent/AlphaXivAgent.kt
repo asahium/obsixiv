@@ -189,10 +189,14 @@ class AlphaXivAgent {
             **Formatting Rules:**
             - Use **bold** for all key terms, metrics, and important phrases
             - Use *italics* for emphasis or quotes
-            - Use `code formatting` for technical terms, variable names, model names
+            - Use code formatting (backticks) for technical terms, variable names, model names
             - Use > blockquotes for important takeaways
             - Use --- for section dividers (horizontal rules)
             - Use tables for comparisons (always include headers)
+            - **Math formulas**: Use double dollar signs for display math (block formulas) and single dollar signs for inline math
+              - Example block: ${"$$"}$\mathcal{L} = \sum_{i=1}^N \log p(y_i|x_i)${"$$"}
+              - Example inline: The loss function ${"$"}\mathcal{L}${" $"} measures...
+              - **NEVER use** square brackets with backslash - they don't render in Markdown
             
             **Tone Consistency:**
             - Enthusiastic but not annoying
@@ -229,12 +233,16 @@ class AlphaXivAgent {
         
         val prompt = buildPrompt(pdfContent)
         
-        // Determine API based on key prefix
+        // Determine API based on key format
         return when {
             apiKey.startsWith("pplx-") -> generateWithPerplexity(apiKey, systemPrompt, prompt, temperature)
             apiKey.startsWith("sk-ant-") -> generateWithClaude(apiKey, systemPrompt, prompt, temperature)
             apiKey.startsWith("sk-") -> generateWithOpenAI(apiKey, systemPrompt, prompt, temperature)
-            else -> throw Exception("Unknown API key format. Supported: Perplexity (pplx-), Claude (sk-ant-), OpenAI (sk-)")
+            apiKey.startsWith("http://") || apiKey.startsWith("https://") -> {
+                // Local model (Ollama, LM Studio, etc.) - format: http://localhost:11434|model_name
+                generateWithLocalModel(apiKey, systemPrompt, prompt, temperature)
+            }
+            else -> throw Exception("Unknown API key format. Supported: Perplexity (pplx-), Claude (sk-ant-), OpenAI (sk-), Local (http://...)")
         }
     }
     
@@ -330,6 +338,51 @@ class AlphaXivAgent {
         return content ?: throw Exception("Empty response from OpenAI")
     }
     
+    private suspend fun generateWithLocalModel(apiConfig: String, systemPrompt: String, prompt: String, temperature: Double): String {
+        // Format: http://localhost:11434|llama3.1 (URL|model_name)
+        val parts = apiConfig.split("|")
+        val baseUrl = parts[0].trim()
+        val modelName = parts.getOrNull(1)?.trim() ?: "llama3.1" // Default model
+        
+        println("🏠 Using local model: $modelName at $baseUrl")
+        
+        val request = PerplexityRequest( // Reuse same structure as OpenAI-compatible
+            model = modelName,
+            messages = listOf(
+                PerplexityMessage(role = "system", content = systemPrompt),
+                PerplexityMessage(role = "user", content = prompt)
+            ),
+            temperature = temperature,
+            max_tokens = 4000
+        )
+        
+        // OpenAI-compatible endpoint (Ollama, LM Studio use /v1/chat/completions)
+        val endpoint = if (baseUrl.contains("/v1/")) baseUrl else "$baseUrl/v1/chat/completions"
+        
+        val response = client.post(endpoint) {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+        
+        val responseText: String = response.body()
+        println("🏠 Local model response: ${responseText.take(200)}")
+        
+        val json = Json.parseToJsonElement(responseText).jsonObject
+        
+        // Handle error response
+        if (json.containsKey("error")) {
+            val errorMsg = json["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
+            throw Exception("Local model error: $errorMsg")
+        }
+        
+        val choices = json["choices"]?.jsonArray
+        val firstChoice = choices?.firstOrNull()?.jsonObject
+        val message = firstChoice?.get("message")?.jsonObject
+        val content = message?.get("content")?.jsonPrimitive?.content
+        
+        return content ?: throw Exception("Empty response from local model")
+    }
+    
     suspend fun answerQuestion(
         pdfContent: String,
         question: String,
@@ -353,6 +406,7 @@ class AlphaXivAgent {
             apiKey.startsWith("pplx-") -> generateWithPerplexity(apiKey, systemPrompt, prompt, temperature)
             apiKey.startsWith("sk-ant-") -> generateWithClaude(apiKey, systemPrompt, prompt, temperature)
             apiKey.startsWith("sk-") -> generateWithOpenAI(apiKey, systemPrompt, prompt, temperature)
+            apiKey.startsWith("http://") || apiKey.startsWith("https://") -> generateWithLocalModel(apiKey, systemPrompt, prompt, temperature)
             else -> throw Exception("Unknown API key format")
         }
     }

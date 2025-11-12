@@ -32,9 +32,11 @@ An Obsidian plugin that generates AlphaXiv-style blog posts from PDF papers usin
 - 📄 **PDF Text Extraction** - Automatically extracts content from academic papers
 - 🔍 **Paper Search** - Search by title on ArXiv and Semantic Scholar
 - 📥 **Auto Download** - Automatically downloads and processes papers
-- 🤖 **Kotlin AI Agent** - Backend service with direct Claude API integration
+- 🤖 **Multi-Provider AI** - Supports Perplexity, Claude, OpenAI, and local models (Ollama, LM Studio)
+- 🏠 **Local Models** - Run completely offline with Llama 3.1, Mistral, etc.
 - 🎨 **AlphaXiv Style** - Generates fun, informative, and accessible blog posts
 - 😄 **Emojis & Humor** - Adds jokes, memes, and entertaining commentary
+- 🖼️ **Image Extraction** - Automatically extracts figures from LaTeX sources (architectures, diagrams, plots)
 - 🔗 **Related Papers** - Automatically finds and lists similar work
 - 💬 **PDF Chat** - Ask questions about any paper with Markdown support
 - 📚 **Batch Processing** - Process multiple PDFs at once
@@ -267,6 +269,41 @@ The plugin creates a Markdown file with **consistent structure across all posts*
 - [examples/example-output.md](examples/example-output.md) - Example blog post
 - [BLOG_POST_STRUCTURE.md](BLOG_POST_STRUCTURE.md) - Detailed structure guide
 
+### 🖼️ Image Extraction
+
+When processing ArXiv papers, ObsiXiv can automatically extract figures from the LaTeX source:
+
+**How it works:**
+1. Downloads `.tar.gz` archive from `arxiv.org/e-print/{arxiv-id}`
+2. Extracts and parses all `.tex` files
+3. Finds `\includegraphics{...}` commands
+4. Identifies **important figures** (architectures, models, results) vs. supplementary figures
+5. Copies images to `obsixiv/blog-posts/{paper-name}_figures/`
+6. Inserts **top 3 important figures** into relevant sections (Architecture, Results, etc.)
+7. Adds additional figures in a separate "Key Figures" section at the end
+
+**What gets extracted:**
+- ✅ Model architectures and diagrams
+- ✅ Result plots and graphs
+- ✅ PNG, JPG, JPEG, PDF formats (PDF is most common in ArXiv papers)
+- 🎯 **Smart prioritization**: Identifies important figures based on filename (architecture, model, results, etc.)
+
+**Requirements:**
+- Paper must be from ArXiv (has LaTeX sources)
+- "Extract Images from LaTeX" setting must be enabled (default: ON)
+- Images are stored next to the blog post: `obsixiv/blog-posts/{paper-name}_figures/`
+- Images are inserted using Obsidian wiki-style links: `![[{paper-name}_figures/figure.pdf]]`
+
+**Example structure:**
+```
+obsixiv/blog-posts/
+├── 2024-11-12_raft.md
+├── raft_figures/
+│   ├── RAFT.pdf          ⭐ (main architecture)
+│   ├── accuracy.pdf       ⭐ (results)
+│   └── ablation.pdf
+```
+
 ---
 
 ## ⚙️ Configuration
@@ -279,10 +316,12 @@ Access via Obsidian Settings → ObsiXiv
 |---------|---------|-------------|
 | **AI API Key** | (empty) | Your Anthropic Claude API key (required) |
 | **Agent URL** | http://localhost:8080 | Where Koog Agent is running |
-| **Output Folder** | blog-posts | Folder for generated posts |
+| **Root Folder** | obsixiv | Root folder for papers, blog posts, and assets |
 | **Temperature** | 0.8 | Creativity level (0.0-1.0) |
 | **Include Emojis** | Yes | Add emojis to posts |
 | **Include Humor** | Yes | Add jokes and memes |
+| **Enable Caching** | Yes | Cache generated posts for faster re-generation |
+| **Extract Images** | Yes | Extract figures from LaTeX sources (architectures, diagrams, plots) |
 
 ### Temperature Guide
 
@@ -445,13 +484,31 @@ netstat -ano | findstr :8080  # Windows
 ## ❓ FAQ
 
 ### Does this work offline?
-No, you need internet connection to use the Claude API for generation. PDF extraction works offline.
+Yes! You can use local models (Ollama, LM Studio, etc.). Cloud API calls require internet.
 
 ### How much does it cost?
-The plugin is free! You only pay for Claude API calls (typically $0.01-0.10 per blog post depending on paper length).
+- **Plugin**: Free and open-source
+- **Cloud APIs**: $0.01-0.10 per blog post (Perplexity, Claude, OpenAI)
+- **Local models**: Completely free! Run Llama 3.1, Mistral, etc. locally
 
 ### Can I use a different AI provider?
-Yes! The Koog framework supports multiple providers. Edit the agent code to change the model provider.
+Yes! ObsiXiv supports multiple providers:
+
+**Cloud APIs:**
+- ✅ **Perplexity** (pplx-xxx) - Fast, good for research papers
+- ✅ **Claude** (sk-ant-xxx) - Best quality, excellent at following structure
+- ✅ **OpenAI** (sk-xxx) - GPT-4o, reliable
+
+**Local Models:**
+- ✅ **Ollama** - Free, runs on your machine
+- ✅ **LM Studio** - User-friendly local inference
+- ✅ **Any OpenAI-compatible endpoint**
+
+**Setup for local models:**
+1. Install Ollama: `brew install ollama` (macOS) or [ollama.ai](https://ollama.ai)
+2. Pull a model: `ollama pull llama3.1`
+3. In Obsidian settings, set API Key to: `http://localhost:11434|llama3.1`
+4. Format: `http://your-endpoint|model-name`
 
 ### Can I deploy the agent to the cloud?
 Yes! Deploy to Railway, Fly.io, AWS, GCP, or any platform that supports Docker. Then update the Agent URL in Obsidian settings.
