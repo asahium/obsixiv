@@ -888,15 +888,8 @@ class PaperSearchModal extends Modal {
 		contentEl.empty();
 		contentEl.addClass("obsixiv-search-modal");
 
-		// Header with icon
-		const headerDiv = contentEl.createDiv();
-		headerDiv.style.cssText = "display: flex; align-items: center; gap: 10px; margin-bottom: 10px;";
-		
-		const iconSpan = headerDiv.createEl("span", { text: "🔍" });
-		iconSpan.style.cssText = "font-size: 24px;";
-		
-		const titleEl = headerDiv.createEl("h2", { text: "Search Paper by Title" });
-		titleEl.style.cssText = "margin: 0;";
+		// Header
+		contentEl.createEl("h2", { text: "Search Paper by Title" });
 
 		contentEl.createEl("p", {
 			text: "Enter the title of the academic paper you want to find:",
