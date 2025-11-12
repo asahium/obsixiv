@@ -13,6 +13,7 @@ import {
 	normalizePath,
 	requestUrl,
 } from "obsidian";
+import { unzlibSync } from "fflate";
 
 interface ObsiXivSettings {
 	apiKey: string;
@@ -24,6 +25,7 @@ interface ObsiXivSettings {
 	customPrompt: string;
 	writingStyle: string;
 	enableCache: boolean;
+	extractImages: boolean; // Extract images from LaTeX sources
 }
 
 interface CacheEntry {
@@ -50,6 +52,7 @@ const DEFAULT_SETTINGS: ObsiXivSettings = {
 	customPrompt: "",
 	writingStyle: "alphaxiv",
 	enableCache: true,
+	extractImages: true, // Extract images from LaTeX sources by default
 };
 
 export default class ObsiXivPlugin extends Plugin {
@@ -64,6 +67,22 @@ export default class ObsiXivPlugin extends Plugin {
 	// Get path to blog posts folder
 	getBlogPostsFolder(): string {
 		return normalizePath(`${this.settings.rootFolder}/blog-posts`);
+	}
+
+	// Get path to assets folder for a specific paper (next to blog post)
+	getAssetsFolder(paperName: string): string {
+		const blogFolder = this.getBlogPostsFolder();
+		return normalizePath(`${blogFolder}/${paperName}_figures`);
+	}
+
+	// Ensure assets folder exists for a paper
+	async ensureAssetsFolder(paperName: string): Promise<void> {
+		const assetsFolder = this.getAssetsFolder(paperName);
+		try {
+			await this.app.vault.createFolder(assetsFolder);
+		} catch (e) {
+			// Folder might already exist
+		}
 	}
 
 	// Ensure folder structure exists
@@ -649,6 +668,9 @@ export default class ObsiXivPlugin extends Plugin {
 				console.log("✅ ArXiv metadata fetched:", metadata.title);
 				new Notice(`Found ArXiv: ${metadata.title.substring(0, 50)}...`);
 			}
+		} else {
+			console.log("ℹ️ No ArXiv ID found in filename - image extraction will be skipped");
+			console.log("💡 Tip: Rename file to include ArXiv ID (e.g., '2011.10944.pdf') to enable image extraction");
 		}
 
 		try {
@@ -666,6 +688,24 @@ export default class ObsiXivPlugin extends Plugin {
 			// Smart truncation: cut at References section or use 50000 char limit
 			// This allows the full paper (except bibliography) to be processed
 			pdfContent = this.truncatePdfContent(pdfContent, 50000);
+
+			// Extract images from LaTeX source BEFORE generating blog (so LLM knows what's available)
+			let extractedImages: string[] = [];
+			let figuresFolderName = '';
+			if (arxivId && this.settings.extractImages) {
+				new Notice("🎨 Extracting images from LaTeX source...");
+				const sanitizedName = pdfFile.basename.replace(/[^a-zA-Z0-9-_]/g, "_").toLowerCase();
+				figuresFolderName = `${sanitizedName}_figures`;
+				extractedImages = await this.extractImagesFromLatex(arxivId, pdfFile.basename);
+				if (extractedImages.length > 0) {
+					new Notice(`✅ Extracted ${extractedImages.length} images!`);
+				} else {
+					console.log("ℹ️ No images found in LaTeX source");
+				}
+			} else if (!arxivId && this.settings.extractImages) {
+				console.log("⚠️ Image extraction skipped: No ArXiv ID detected");
+				console.log("💡 To enable image extraction, ensure PDF is from ArXiv with ID in filename");
+			}
 
 			// Check cache first
 			let blogPost: string;
@@ -731,8 +771,8 @@ export default class ObsiXivPlugin extends Plugin {
 				console.log("ℹ️ No related papers found");
 			}
 
-			// Save blog post
-			await this.saveBlogPost(pdfFile.basename, blogPost, metadata);
+			// Save blog post with extracted images
+			await this.saveBlogPost(pdfFile.basename, blogPost, metadata, extractedImages);
 
 			new Notice("✨ Blog post generated successfully!");
 		} catch (error) {
@@ -796,6 +836,284 @@ export default class ObsiXivPlugin extends Plugin {
 		return btoa(binary);
 	}
 
+	// Download LaTeX source from arXiv
+	async downloadLatexSource(arxivId: string): Promise<ArrayBuffer | null> {
+		try {
+			// Remove 'arXiv:' prefix if present
+			const cleanId = arxivId.replace(/^arxiv:/i, '').trim();
+			const url = `https://arxiv.org/e-print/${cleanId}`;
+			
+			console.log(`📥 Downloading LaTeX source from: ${url}`);
+			
+			const response = await requestUrl({
+				url: url,
+				method: "GET",
+			});
+
+			if (response.status !== 200) {
+				console.warn(`⚠️ Failed to download LaTeX source: ${response.status}`);
+				return null;
+			}
+
+			console.log(`✅ Downloaded LaTeX source (${response.arrayBuffer.byteLength} bytes)`);
+			return response.arrayBuffer;
+		} catch (error) {
+			console.error("❌ Error downloading LaTeX source:", error);
+			return null;
+		}
+	}
+
+	// Extract .tar.gz archive and return files
+	async extractTarGz(gzipData: ArrayBuffer): Promise<Map<string, Uint8Array> | null> {
+		try {
+			console.log("📦 Extracting archive...");
+			
+			// Step 1: Try to decompress gzip, or use as plain tar if not gzipped
+			const gzipBytes = new Uint8Array(gzipData);
+			let tarBytes: Uint8Array;
+			
+			try {
+				// Try gzip decompression
+				tarBytes = unzlibSync(gzipBytes);
+				console.log("✅ Gzip decompressed");
+			} catch (gzipError) {
+				// Not gzipped - use as plain tar
+				console.log("ℹ️ Not gzipped, treating as plain tar");
+				tarBytes = gzipBytes;
+			}
+			
+			// Step 2: Parse tar archive
+			const files = new Map<string, Uint8Array>();
+			let offset = 0;
+			let filesProcessed = 0;
+			
+			console.log(`📏 Tar archive size: ${tarBytes.length} bytes`);
+			
+			while (offset < tarBytes.length) {
+				// Read tar header (512 bytes)
+				if (offset + 512 > tarBytes.length) {
+					console.log(`⚠️ Not enough bytes for header at offset ${offset}`);
+					break;
+				}
+				
+				const header = tarBytes.slice(offset, offset + 512);
+				
+				// Extract filename (first 100 bytes, null-terminated)
+				let filename = '';
+				for (let i = 0; i < 100; i++) {
+					if (header[i] === 0) break;
+					filename += String.fromCharCode(header[i]);
+				}
+				
+				if (!filename) {
+					console.log(`⚠️ Empty filename at offset ${offset}, end of archive`);
+					break; // End of archive
+				}
+				
+				filesProcessed++;
+				
+				// Extract file size (bytes 124-135, octal)
+				let sizeStr = '';
+				for (let i = 124; i < 136; i++) {
+					if (header[i] === 0 || header[i] === 32) break;
+					sizeStr += String.fromCharCode(header[i]);
+				}
+				const fileSize = parseInt(sizeStr.trim(), 8) || 0;
+				
+				// Extract file type (byte 156)
+				const fileType = String.fromCharCode(header[156]);
+				
+				console.log(`  📋 File #${filesProcessed}: ${filename}, size: ${fileSize}, type: '${fileType}' (${header[156]})`);
+				
+				offset += 512; // Skip header
+				
+				// Read file content
+				if (fileType === '0' || fileType === '\0') { // Regular file
+					if (offset + fileSize <= tarBytes.length) {
+						const content = tarBytes.slice(offset, offset + fileSize);
+						files.set(filename, content);
+						console.log(`    ✅ Saved ${filename}`);
+					} else {
+						console.log(`    ⚠️ Not enough bytes for ${filename} content`);
+					}
+				} else {
+					console.log(`    ⏭️ Skipping (not regular file)`);
+				}
+				
+				// Move to next file (tar blocks are 512-byte aligned)
+				offset += Math.ceil(fileSize / 512) * 512;
+			}
+			
+			console.log(`📊 Tar parsing complete: processed ${filesProcessed} entries, extracted ${files.size} files`);
+			return files;
+		} catch (error) {
+			console.error("❌ Error extracting tar.gz:", error);
+			return null;
+		}
+	}
+
+	// Determine if a figure is important based on filename
+	isImportantFigure(filename: string): boolean {
+		const lowerName = filename.toLowerCase();
+		
+		// High priority: architectures, models, main diagrams
+		const highPriority = [
+			'architecture', 'model', 'network', 'diagram',
+			'overview', 'pipeline', 'framework', 'structure',
+			'method', 'approach', 'system', 'design'
+		];
+		
+		// Medium priority: results, comparisons
+		const mediumPriority = [
+			'result', 'accuracy', 'performance', 'comparison',
+			'loss', 'gradient', 'ablation', 'table',
+			'graph', 'plot', 'chart'
+		];
+		
+		// Check if filename contains important keywords
+		for (const keyword of [...highPriority, ...mediumPriority]) {
+			if (lowerName.includes(keyword)) {
+				return true;
+			}
+		}
+		
+		// Main paper name (e.g., "RAFT.pdf" for RAFT paper)
+		if (/^[A-Z]{3,}\.pdf$/i.test(filename)) {
+			return true;
+		}
+		
+		return false;
+	}
+
+	// Parse LaTeX files for \includegraphics commands
+	parseLatexForImages(texContent: string): string[] {
+		const imageRefs: string[] = [];
+		
+		// Match \includegraphics[...]{filename} or \includegraphics{filename}
+		const includeGraphicsRegex = /\\includegraphics(?:\[.*?\])?\{([^}]+)\}/g;
+		
+		let match;
+		while ((match = includeGraphicsRegex.exec(texContent)) !== null) {
+			let imagePath = match[1].trim();
+			console.log(`      🔍 Found: \\includegraphics{${imagePath}}`);
+			
+			// Remove common LaTeX path prefixes
+			imagePath = imagePath.replace(/^\.\//, '');
+			
+			// Add common extensions if missing
+			if (!/\.(png|jpg|jpeg|pdf|eps)$/i.test(imagePath)) {
+				// Try common extensions (prioritize PDF for ArXiv papers)
+				for (const ext of ['pdf', 'png', 'jpg']) {
+					imageRefs.push(`${imagePath}.${ext}`);
+				}
+			} else {
+				imageRefs.push(imagePath);
+			}
+		}
+		
+		console.log(`      📋 Image refs: [${imageRefs.join(', ')}]`);
+		return imageRefs;
+	}
+
+	// Main function: Extract images from LaTeX source
+	async extractImagesFromLatex(arxivId: string, paperName: string): Promise<string[]> {
+		if (!this.settings.extractImages) {
+			return [];
+		}
+
+		try {
+			console.log(`🎨 Extracting images for paper: ${paperName}`);
+			
+			// Step 1: Download LaTeX source
+			const tarGzData = await this.downloadLatexSource(arxivId);
+			if (!tarGzData) {
+				console.log("⚠️ Could not download LaTeX source");
+				return [];
+			}
+
+			// Step 2: Extract archive
+			const files = await this.extractTarGz(tarGzData);
+			if (!files || files.size === 0) {
+				console.log("⚠️ Could not extract files from archive");
+				return [];
+			}
+
+			console.log(`📂 Files in archive: ${Array.from(files.keys()).join(', ')}`);
+
+			// Step 3: Find main .tex file and parse for images
+			let allImageRefs: string[] = [];
+			let texFilesFound = 0;
+			
+			for (const [filename, content] of files.entries()) {
+				if (filename.endsWith('.tex')) {
+					texFilesFound++;
+					console.log(`  📄 Parsing ${filename}...`);
+					const texContent = new TextDecoder().decode(content);
+					const imageRefs = this.parseLatexForImages(texContent);
+					console.log(`    → Found ${imageRefs.length} image references`);
+					allImageRefs.push(...imageRefs);
+				}
+			}
+
+			console.log(`📊 Total: ${texFilesFound} .tex files, ${allImageRefs.length} image references`);
+
+			if (allImageRefs.length === 0) {
+				console.log("📝 No images found in LaTeX source");
+				return [];
+			}
+
+			console.log(`🖼️ Found ${allImageRefs.length} image references`);
+
+			// Step 4: Create assets folder
+			await this.ensureAssetsFolder(paperName);
+			const assetsFolder = this.getAssetsFolder(paperName);
+
+			// Step 5: Copy images from archive to assets folder
+			const copiedImages: string[] = [];
+			for (const imageRef of allImageRefs) {
+				// Normalize image path
+				const imageName = imageRef.split('/').pop() || imageRef;
+				
+				// Try to find the image in the archive
+				let imageData: Uint8Array | undefined;
+				
+				// Try exact match
+				if (files.has(imageRef)) {
+					imageData = files.get(imageRef);
+				} else {
+					// Try to find by filename alone (ignore directory structure)
+					for (const [archivePath, data] of files.entries()) {
+						if (archivePath.endsWith(imageRef) || archivePath.endsWith(imageName)) {
+							imageData = data;
+							break;
+						}
+					}
+				}
+
+				if (imageData) {
+					// Copy displayable formats (PNG, JPG, PDF)
+					// Obsidian can display PDF files inline
+					if (/\.(png|jpg|jpeg|pdf)$/i.test(imageName)) {
+						// Prioritize important figures based on filename
+						const isImportant = this.isImportantFigure(imageName);
+						
+						const imagePath = normalizePath(`${assetsFolder}/${imageName}`);
+						await this.app.vault.createBinary(imagePath, imageData);
+						copiedImages.push(imageName);
+						console.log(`  ${isImportant ? '⭐' : '✅'} Copied: ${imageName}${isImportant ? ' (important)' : ''}`);
+					}
+				}
+			}
+
+			console.log(`🎉 Successfully extracted ${copiedImages.length} images`);
+			return copiedImages;
+
+		} catch (error) {
+			console.error("❌ Error extracting images from LaTeX:", error);
+			return [];
+		}
+	}
+
 	async askQuestion(pdfContent: string, question: string): Promise<string> {
 		try {
 			console.log("💬 Sending question to agent:", question);
@@ -838,16 +1156,17 @@ export default class ObsiXivPlugin extends Plugin {
 
 	extractArxivId(filename: string): string | null {
 		// Try various ArXiv ID formats
-		// Format: YYMM.NNNNN or YYMM.NNNNNvN
+		// Format: YYMM.NNNNN or YYMM.NNNNNvN (also support underscore: YYMM_NNNNN)
 		const patterns = [
-			/(\d{4}\.\d{4,5}(?:v\d+)?)/,  // e.g., 2506.21170v2
-			/arxiv[_-]?(\d{4}\.\d{4,5}(?:v\d+)?)/i,  // e.g., arxiv_2506.21170
+			/(\d{4}[\._]\d{4,5}(?:v\d+)?)/,  // e.g., 2401.10227v2 or 2401_10227v2
+			/arxiv[_-]?(\d{4}[\._]\d{4,5}(?:v\d+)?)/i,  // e.g., arxiv_2401.10227 or arxiv_2401_10227
 		];
 		
 		for (const pattern of patterns) {
 			const match = filename.match(pattern);
 			if (match) {
-				return match[1];
+				// Normalize: replace underscore with dot for ArXiv API compatibility
+				return match[1].replace('_', '.');
 			}
 		}
 		return null;
@@ -953,7 +1272,7 @@ export default class ObsiXivPlugin extends Plugin {
 	}
 
 
-	async saveBlogPost(originalFilename: string, blogPost: string, metadata?: any) {
+	async saveBlogPost(originalFilename: string, blogPost: string, metadata?: any, extractedImages: string[] = []) {
 		// Ensure folder structure exists
 		await this.ensureFolderStructure();
 
@@ -983,6 +1302,75 @@ export default class ObsiXivPlugin extends Plugin {
 				header += `**Published:** ${date.toLocaleDateString()}\n\n`;
 			}
 			header += `---\n\n`;
+		}
+
+		// Insert images into blog post if available
+		if (extractedImages.length > 0) {
+			// Use relative path from blog post to figures folder
+			const figuresFolderName = `${sanitizedName}_figures`;
+			
+			// Separate important and other images
+			const importantImages = extractedImages.filter(img => this.isImportantFigure(img));
+			const otherImages = extractedImages.filter(img => !this.isImportantFigure(img));
+			
+			console.log(`🎨 Found ${importantImages.length} important images, ${otherImages.length} other images`);
+			
+			// Try to insert important images after specific sections
+			const sectionsToTryInsert = [
+				{ pattern: /## 🎨 Architecture\n\n/, name: 'Architecture' },
+				{ pattern: /## 🔧 How It Works\n\n/, name: 'How It Works' },
+				{ pattern: /## 💡 The Big Idea\n\n/, name: 'The Big Idea' },
+				{ pattern: /## 📊 Results That Matter\n\n/, name: 'Results' }
+			];
+
+			let imagesInserted = false;
+			
+			// Only insert important images in the main sections
+			if (importantImages.length > 0) {
+				for (const section of sectionsToTryInsert) {
+					if (section.pattern.test(blogPost)) {
+						// Build image gallery with only important images
+						let imageGallery = '\n\n';
+						for (const imageName of importantImages.slice(0, 3)) { // Max 3 important images
+							imageGallery += `![[${figuresFolderName}/${imageName}]]\n\n`;
+						}
+						
+						// Insert after the section header
+						blogPost = blogPost.replace(section.pattern, (match) => {
+							console.log(`⭐ Inserted ${Math.min(importantImages.length, 3)} important images after ${section.name} section`);
+							return match + imageGallery;
+						});
+						imagesInserted = true;
+						break;
+					}
+				}
+			}
+
+			// If no suitable section found or no important images, add all as separate section
+			if (!imagesInserted && extractedImages.length > 0) {
+				console.log(`🖼️ Adding all ${extractedImages.length} images as separate section`);
+				let imageSection = `\n\n## 🖼️ Key Figures\n\n`;
+				
+				// Show important images first
+				for (const imageName of importantImages.slice(0, 5)) {
+					imageSection += `![[${figuresFolderName}/${imageName}]]\n\n`;
+				}
+				
+				// Then show a few other images
+				if (otherImages.length > 0) {
+					imageSection += `\n**Additional Figures:**\n\n`;
+					for (const imageName of otherImages.slice(0, 3)) {
+						imageSection += `![[${figuresFolderName}/${imageName}]]\n\n`;
+					}
+				}
+				
+				// Insert before Related Papers section
+				if (blogPost.includes('## 📚 Related Papers')) {
+					blogPost = blogPost.replace(/\n\n---\n\n## 📚 Related Papers/, imageSection + '\n\n---\n\n## 📚 Related Papers');
+				} else {
+					blogPost += imageSection;
+				}
+			}
 		}
 
 		// Extract keywords from the blog post for similarity matching
@@ -1214,10 +1602,11 @@ class PaperSearchModal extends Modal {
 			statusDiv.textContent = `📥 Downloading: ${result.metadata.title.substring(0, 60)}...`;
 			statusDiv.style.color = "var(--text-muted)";
 
-			// Download PDF
+			// Download PDF with ArXiv ID as filename (if available) for image extraction
+			const filename = result.metadata.arxivId || result.metadata.title;
 			const pdfFile = await this.plugin.downloadPdfFromUrl(
 				result.url,
-				result.metadata.title
+				filename
 			);
 
 			this.close();
@@ -1690,6 +2079,18 @@ class ObsiXivSettingTab extends PluginSettingTab {
 						})
 				);
 		}
+
+		new Setting(containerEl)
+			.setName("Extract Images from LaTeX")
+			.setDesc("Download and extract figures (PNG/JPG) from LaTeX source files. Images will be saved to assets folder and inserted into blog posts.")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.extractImages)
+					.onChange(async (value) => {
+						this.plugin.settings.extractImages = value;
+						await this.plugin.saveSettings();
+					})
+			);
 
 		containerEl.createEl("h3", { text: "Setup" });
 		containerEl.createEl("p", {
