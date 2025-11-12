@@ -70,18 +70,58 @@ class AlphaXivAgent {
         apiKey: String,
         temperature: Double = 0.8,
         includeEmojis: Boolean = true,
-        includeHumor: Boolean = true
+        includeHumor: Boolean = true,
+        customPrompt: String = "",
+        writingStyle: String = "alphaxiv"
     ): String {
-        // Build prompt based on settings
-        val styleInstructions = buildStyleInstructions(includeEmojis, includeHumor)
-        val prompt = buildPrompt(pdfContent, styleInstructions)
+        // Build style instructions based on writing style
+        val styleDesc = when(writingStyle) {
+            "technical" -> "Write in a detailed technical style, focusing on methodology, algorithms, and implementation details. Use precise terminology."
+            "casual" -> "Write in a casual, easy-to-read style. Explain concepts simply without jargon. Make it accessible to beginners."
+            "academic" -> "Write in a formal academic style with proper citations, structured sections, and scholarly tone."
+            else -> "Write in the AlphaXiv style: entertaining, accessible, with creative commentary, memes references, and emojis."
+        }
         
-        // Call Claude API directly
+        val customInstructions = if (customPrompt.isNotEmpty()) "\n\nAdditional instructions: $customPrompt" else ""
+        val emojiHumorInstructions = buildStyleInstructions(includeEmojis, includeHumor)
+        
         val systemPrompt = """
-            You are an expert at writing engaging, humorous, and informative blog posts about 
-            academic papers in the style of AlphaXiv. Your posts should be entertaining, 
-            accessible, and include creative commentary, memes references, and emojis.
+            You are an expert at writing engaging blog posts about academic papers.
+            
+            Style: $styleDesc
+            $emojiHumorInstructions
+            
+            CRITICAL REQUIREMENTS:
+            1. **Extract Key Results with Numbers**: Always include the main quantitative results, metrics, and performance numbers from the paper. Present them clearly with exact values (e.g., "achieved 95.2% accuracy", "reduced latency by 3.4x", "BLEU score of 42.8").
+            
+            2. **Include Important Formulas**: Identify and include the most important mathematical formulas from the paper. Format them in LaTeX/markdown math notation using $ for inline math and $$ for block equations. Explain what each formula means in simple terms.
+            
+            3. **Results Section**: Create a dedicated "📊 Key Results" or "🎯 Main Findings" section that summarizes:
+               - Baseline comparisons with numbers
+               - Performance metrics with exact values
+               - Statistical significance if mentioned
+               - Comparison tables (recreate as markdown tables)
+            
+            4. **Formulas Section**: If the paper has important equations, include a "🔢 Key Formulas" section explaining:
+               - What each formula does
+               - What the variables mean
+               - Why it's important
+            
+            Example format:
+            ## 🎯 Main Results
+            - Model achieved **92.4% accuracy** on ImageNet (vs 89.1% baseline)
+            - Training time reduced by **3.2x** (from 48h to 15h)
+            - F1 score: **0.876** (state-of-the-art)
+            
+            ## 🔢 Key Formula
+            The attention mechanism is computed as:
+            
+            $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V$$
+            
+            Where Q (query), K (key), V (value) are learned projections, and d_k is the dimension scaling factor.$customInstructions
         """.trimIndent()
+        
+        val prompt = buildPrompt(pdfContent, emojiHumorInstructions)
         
         // Determine API based on key prefix
         return when {

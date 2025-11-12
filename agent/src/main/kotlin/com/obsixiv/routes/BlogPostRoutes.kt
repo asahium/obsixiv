@@ -37,7 +37,9 @@ fun Route.generateBlogPostRoute() {
                 apiKey = apiKey,
                 temperature = request.temperature,
                 includeEmojis = request.includeEmojis,
-                includeHumor = request.includeHumor
+                includeHumor = request.includeHumor,
+                customPrompt = request.customPrompt,
+                writingStyle = request.writingStyle
             )
             
             println("✅ Blog post generated! Length: ${blogPost.length}")

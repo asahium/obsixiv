@@ -7,7 +7,9 @@ data class GenerateBlogPostRequest(
     val pdfContent: String,
     val temperature: Double = 0.8,
     val includeEmojis: Boolean = true,
-    val includeHumor: Boolean = true
+    val includeHumor: Boolean = true,
+    val customPrompt: String = "",
+    val writingStyle: String = "alphaxiv"
 )
 
 @Serializable
