@@ -20,6 +20,23 @@ interface ObsiXivSettings {
 	temperature: number;
 	includeEmojis: boolean;
 	includeHumor: boolean;
+	customPrompt: string;
+	writingStyle: string;
+	enableCache: boolean;
+}
+
+interface CacheEntry {
+	pdfHash: string;
+	blogPost: string;
+	metadata?: any;
+	timestamp: number;
+	settings: {
+		temperature: number;
+		includeEmojis: boolean;
+		includeHumor: boolean;
+		customPrompt: string;
+		writingStyle: string;
+	};
 }
 
 const DEFAULT_SETTINGS: ObsiXivSettings = {
@@ -29,13 +46,18 @@ const DEFAULT_SETTINGS: ObsiXivSettings = {
 	temperature: 0.8,
 	includeEmojis: true,
 	includeHumor: true,
+	customPrompt: "",
+	writingStyle: "alphaxiv",
+	enableCache: true,
 };
 
 export default class ObsiXivPlugin extends Plugin {
 	settings: ObsiXivSettings;
+	cache: Map<string, CacheEntry> = new Map();
 
 	async onload() {
 		await this.loadSettings();
+		await this.loadCache();
 
 		// Add ribbon icon
 		const ribbonIconEl = this.addRibbonIcon(
@@ -67,6 +89,15 @@ export default class ObsiXivPlugin extends Plugin {
 					return;
 				}
 				new PdfChatModal(this.app, this, activeFile).open();
+			},
+		});
+
+		// Add command for batch processing
+		this.addCommand({
+			id: "batch-generate-posts",
+			name: "Batch generate blog posts from PDFs",
+			callback: async () => {
+				new BatchProcessModal(this.app, this).open();
 			},
 		});
 
@@ -104,6 +135,51 @@ export default class ObsiXivPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
+	async loadCache() {
+		try {
+			const cacheData = await this.loadData();
+			if (cacheData && cacheData._cache) {
+				this.cache = new Map(Object.entries(cacheData._cache));
+				console.log(`📦 Loaded ${this.cache.size} cached entries`);
+			}
+		} catch (error) {
+			console.error("Error loading cache:", error);
+		}
+	}
+
+	async saveCache() {
+		try {
+			const data = await this.loadData() || {};
+			data._cache = Object.fromEntries(this.cache);
+			await this.saveData(data);
+		} catch (error) {
+			console.error("Error saving cache:", error);
+		}
+	}
+
+	hashString(str: string): string {
+		// Simple hash function for caching
+		let hash = 0;
+		for (let i = 0; i < str.length; i++) {
+			const char = str.charCodeAt(i);
+			hash = ((hash << 5) - hash) + char;
+			hash = hash & hash;
+		}
+		return hash.toString(36);
+	}
+
+	getCacheKey(pdfContent: string): string {
+		const contentHash = this.hashString(pdfContent);
+		const settingsHash = this.hashString(JSON.stringify({
+			temperature: this.settings.temperature,
+			includeEmojis: this.settings.includeEmojis,
+			includeHumor: this.settings.includeHumor,
+			customPrompt: this.settings.customPrompt,
+			writingStyle: this.settings.writingStyle,
+		}));
+		return `${contentHash}_${settingsHash}`;
+	}
+
 	async generateBlogPostFromActivePdf() {
 		const activeFile = this.app.workspace.getActiveFile();
 
@@ -129,6 +205,18 @@ export default class ObsiXivPlugin extends Plugin {
 		new Notice("Extracting text from PDF...");
 		console.log("🚀 Starting PDF processing for:", pdfFile.name);
 
+		// Try to extract ArXiv ID from filename
+		const arxivId = this.extractArxivId(pdfFile.name);
+		let metadata = null;
+		if (arxivId) {
+			console.log("📑 Found ArXiv ID:", arxivId);
+			metadata = await this.fetchArxivMetadata(arxivId);
+			if (metadata) {
+				console.log("✅ ArXiv metadata fetched:", metadata.title);
+				new Notice(`Found ArXiv: ${metadata.title.substring(0, 50)}...`);
+			}
+		}
+
 		try {
 			// Extract PDF content
 			console.log("📄 Extracting PDF text...");
@@ -148,17 +236,57 @@ export default class ObsiXivPlugin extends Plugin {
 				pdfContent = pdfContent.substring(0, maxLength) + "\n\n[Content truncated for processing]";
 			}
 
-			new Notice("Generating blog post with Koog Agent...");
-			console.log("🤖 Calling agent with text length:", pdfContent.length);
-			console.log("🔑 API key:", this.settings.apiKey.substring(0, 10) + "...");
-			console.log("🌐 Agent URL:", this.settings.agentUrl);
+			// Check cache first
+			let blogPost: string;
+			if (this.settings.enableCache) {
+				const cacheKey = this.getCacheKey(pdfContent);
+				const cached = this.cache.get(cacheKey);
+				
+				if (cached && cached.metadata?.arxivId === metadata?.arxivId) {
+					console.log("💾 Using cached blog post");
+					new Notice("✨ Using cached result!");
+					blogPost = cached.blogPost;
+					metadata = cached.metadata || metadata;
+				} else {
+					new Notice("Generating blog post with Koog Agent...");
+					console.log("🤖 Calling agent with text length:", pdfContent.length);
+					console.log("🔑 API key:", this.settings.apiKey.substring(0, 10) + "...");
+					console.log("🌐 Agent URL:", this.settings.agentUrl);
 
-			// Generate blog post using Koog Agent
-			const blogPost = await this.generateBlogPostWithKoogAgent(pdfContent);
-			console.log("✅ Blog post received! Length:", blogPost.length);
+					// Generate blog post using Koog Agent
+					blogPost = await this.generateBlogPostWithKoogAgent(pdfContent, metadata);
+					console.log("✅ Blog post received! Length:", blogPost.length);
+					
+					// Save to cache
+					this.cache.set(cacheKey, {
+						pdfHash: cacheKey,
+						blogPost: blogPost,
+						metadata: metadata,
+						timestamp: Date.now(),
+						settings: {
+							temperature: this.settings.temperature,
+							includeEmojis: this.settings.includeEmojis,
+							includeHumor: this.settings.includeHumor,
+							customPrompt: this.settings.customPrompt,
+							writingStyle: this.settings.writingStyle,
+						}
+					});
+					await this.saveCache();
+					console.log("💾 Cached result for future use");
+				}
+			} else {
+				new Notice("Generating blog post with Koog Agent...");
+				console.log("🤖 Calling agent with text length:", pdfContent.length);
+				console.log("🔑 API key:", this.settings.apiKey.substring(0, 10) + "...");
+				console.log("🌐 Agent URL:", this.settings.agentUrl);
+
+				// Generate blog post using Koog Agent
+				blogPost = await this.generateBlogPostWithKoogAgent(pdfContent, metadata);
+				console.log("✅ Blog post received! Length:", blogPost.length);
+			}
 
 			// Save blog post
-			await this.saveBlogPost(pdfFile.basename, blogPost);
+			await this.saveBlogPost(pdfFile.basename, blogPost, metadata);
 
 			new Notice("✨ Blog post generated successfully!");
 		} catch (error) {
@@ -249,7 +377,77 @@ export default class ObsiXivPlugin extends Plugin {
 		}
 	}
 
-	async generateBlogPostWithKoogAgent(pdfContent: string): Promise<string> {
+	extractArxivId(filename: string): string | null {
+		// Try various ArXiv ID formats
+		// Format: YYMM.NNNNN or YYMM.NNNNNvN
+		const patterns = [
+			/(\d{4}\.\d{4,5}(?:v\d+)?)/,  // e.g., 2506.21170v2
+			/arxiv[_-]?(\d{4}\.\d{4,5}(?:v\d+)?)/i,  // e.g., arxiv_2506.21170
+		];
+		
+		for (const pattern of patterns) {
+			const match = filename.match(pattern);
+			if (match) {
+				return match[1];
+			}
+		}
+		return null;
+	}
+
+	async fetchArxivMetadata(arxivId: string): Promise<any | null> {
+		try {
+			const apiUrl = `http://export.arxiv.org/api/query?id_list=${arxivId}`;
+			const response = await requestUrl({ url: apiUrl });
+			
+			if (response.status !== 200) {
+				console.warn("⚠️ ArXiv API returned status:", response.status);
+				return null;
+			}
+			
+			// Parse XML response
+			const parser = new DOMParser();
+			const xmlDoc = parser.parseFromString(response.text, "text/xml");
+			
+			const entry = xmlDoc.querySelector("entry");
+			if (!entry) {
+				console.warn("⚠️ No entry found in ArXiv response");
+				return null;
+			}
+			
+			const title = entry.querySelector("title")?.textContent?.trim() || "";
+			const summary = entry.querySelector("summary")?.textContent?.trim() || "";
+			const published = entry.querySelector("published")?.textContent?.trim() || "";
+			const updated = entry.querySelector("updated")?.textContent?.trim() || "";
+			
+			const authors: string[] = [];
+			entry.querySelectorAll("author name").forEach(authorNode => {
+				const authorName = authorNode.textContent?.trim();
+				if (authorName) authors.push(authorName);
+			});
+			
+			const categories: string[] = [];
+			entry.querySelectorAll("category").forEach(catNode => {
+				const term = catNode.getAttribute("term");
+				if (term) categories.push(term);
+			});
+			
+			return {
+				arxivId,
+				title,
+				authors,
+				summary,
+				published,
+				updated,
+				categories,
+				url: `https://arxiv.org/abs/${arxivId}`,
+			};
+		} catch (error) {
+			console.error("❌ Error fetching ArXiv metadata:", error);
+			return null;
+		}
+	}
+
+	async generateBlogPostWithKoogAgent(pdfContent: string, metadata?: any): Promise<string> {
 		try {
 			console.log("📡 Sending request to agent...");
 			const requestBody = {
@@ -257,6 +455,9 @@ export default class ObsiXivPlugin extends Plugin {
 				temperature: this.settings.temperature,
 				includeEmojis: this.settings.includeEmojis,
 				includeHumor: this.settings.includeHumor,
+				customPrompt: this.settings.customPrompt,
+				writingStyle: this.settings.writingStyle,
+				arxivMetadata: metadata || undefined,
 			};
 			console.log("📦 Request body size:", JSON.stringify(requestBody).length);
 			
@@ -293,7 +494,7 @@ export default class ObsiXivPlugin extends Plugin {
 	}
 
 
-	async saveBlogPost(originalFilename: string, blogPost: string) {
+	async saveBlogPost(originalFilename: string, blogPost: string, metadata?: any) {
 		// Ensure output folder exists
 		const folder = normalizePath(this.settings.outputFolder);
 		try {
@@ -311,8 +512,24 @@ export default class ObsiXivPlugin extends Plugin {
 			`${folder}/${timestamp}_${sanitizedName}.md`
 		);
 
-		// Add frontmatter
-		const frontmatter = `---
+		// Add frontmatter (with ArXiv metadata if available)
+		let frontmatter = '';
+		if (metadata) {
+			frontmatter = `---
+title: "${metadata.title?.replace(/"/g, '\\"') || originalFilename}"
+arxiv_id: "${metadata.arxivId || ''}"
+arxiv_url: "${metadata.url || ''}"
+authors: "${metadata.authors?.join(', ') || ''}"
+published: "${metadata.published || ''}"
+categories: "${metadata.categories?.join(', ') || ''}"
+source_pdf: "${originalFilename}.pdf"
+generated: ${new Date().toISOString()}
+generator: ObsiXiv
+---
+
+`;
+		} else {
+			frontmatter = `---
 title: "${originalFilename}"
 source_pdf: "${originalFilename}.pdf"
 generated: ${new Date().toISOString()}
@@ -320,6 +537,7 @@ generator: ObsiXiv
 ---
 
 `;
+		}
 
 		const fullContent = frontmatter + blogPost;
 
@@ -332,6 +550,142 @@ generator: ObsiXiv
 			const leaf = this.app.workspace.getLeaf('split', 'vertical');
 			await leaf.openFile(file);
 		}
+	}
+}
+
+class BatchProcessModal extends Modal {
+	plugin: ObsiXivPlugin;
+	selectedFiles: TFile[] = [];
+
+	constructor(app: App, plugin: ObsiXivPlugin) {
+		super(app);
+		this.plugin = plugin;
+	}
+
+	async onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("obsixiv-batch-modal");
+
+		contentEl.createEl("h2", { text: "📚 Batch Generate Blog Posts" });
+
+		// Get all PDF files
+		const allFiles = this.app.vault.getFiles();
+		const pdfFiles = allFiles.filter(f => f.extension === "pdf");
+
+		if (pdfFiles.length === 0) {
+			contentEl.createEl("p", { text: "No PDF files found in vault" });
+			return;
+		}
+
+		contentEl.createEl("p", { 
+			text: `Found ${pdfFiles.length} PDF files. Select which ones to process:` 
+		});
+
+		// File list container
+		const fileListContainer = contentEl.createDiv("batch-file-list");
+		fileListContainer.style.cssText = "max-height: 300px; overflow-y: auto; border: 1px solid var(--background-modifier-border); padding: 10px; margin: 10px 0; border-radius: 5px;";
+
+		// Add checkboxes for each PDF
+		pdfFiles.forEach(file => {
+			const fileItem = fileListContainer.createDiv("batch-file-item");
+			fileItem.style.cssText = "display: flex; align-items: center; padding: 5px; margin: 2px 0;";
+
+			const checkbox = fileItem.createEl("input", { type: "checkbox" });
+			checkbox.style.cssText = "margin-right: 10px;";
+			checkbox.checked = false;
+			
+			checkbox.onchange = () => {
+				if (checkbox.checked) {
+					this.selectedFiles.push(file);
+				} else {
+					this.selectedFiles = this.selectedFiles.filter(f => f !== file);
+				}
+				updateCounter();
+			};
+
+			fileItem.createEl("span", { text: file.path });
+		});
+
+		// Counter and buttons
+		const controlsDiv = contentEl.createDiv("batch-controls");
+		controlsDiv.style.cssText = "margin-top: 15px; display: flex; justify-content: space-between; align-items: center;";
+
+		const counterSpan = controlsDiv.createEl("span", { text: "0 selected" });
+		counterSpan.style.cssText = "font-weight: bold;";
+
+		const updateCounter = () => {
+			counterSpan.textContent = `${this.selectedFiles.length} selected`;
+		};
+
+		const buttonsDiv = controlsDiv.createDiv();
+		buttonsDiv.style.cssText = "display: flex; gap: 10px;";
+
+		const selectAllBtn = buttonsDiv.createEl("button", { text: "Select All" });
+		selectAllBtn.onclick = () => {
+			const checkboxes = fileListContainer.querySelectorAll('input[type="checkbox"]');
+			this.selectedFiles = [...pdfFiles];
+			checkboxes.forEach((cb: any) => cb.checked = true);
+			updateCounter();
+		};
+
+		const deselectAllBtn = buttonsDiv.createEl("button", { text: "Deselect All" });
+		deselectAllBtn.onclick = () => {
+			const checkboxes = fileListContainer.querySelectorAll('input[type="checkbox"]');
+			this.selectedFiles = [];
+			checkboxes.forEach((cb: any) => cb.checked = false);
+			updateCounter();
+		};
+
+		const generateBtn = buttonsDiv.createEl("button", { 
+			text: "Generate Posts",
+			cls: "mod-cta"
+		});
+		generateBtn.onclick = async () => {
+			if (this.selectedFiles.length === 0) {
+				new Notice("Please select at least one PDF");
+				return;
+			}
+			await this.processBatch();
+		};
+	}
+
+	async processBatch() {
+		this.close();
+		
+		const total = this.selectedFiles.length;
+		new Notice(`Starting batch processing of ${total} PDFs...`);
+
+		let successful = 0;
+		let failed = 0;
+
+		for (let i = 0; i < this.selectedFiles.length; i++) {
+			const file = this.selectedFiles[i];
+			const progress = `[${i + 1}/${total}]`;
+			
+			try {
+				new Notice(`${progress} Processing ${file.basename}...`);
+				await this.plugin.generateBlogPostFromPdf(file);
+				successful++;
+				new Notice(`${progress} ✅ ${file.basename} completed`);
+			} catch (error) {
+				failed++;
+				new Notice(`${progress} ❌ ${file.basename} failed: ${error.message}`);
+				console.error(`Failed to process ${file.path}:`, error);
+			}
+
+			// Small delay between requests to avoid rate limiting
+			if (i < this.selectedFiles.length - 1) {
+				await new Promise(resolve => setTimeout(resolve, 2000));
+			}
+		}
+
+		new Notice(`✅ Batch complete! ${successful} successful, ${failed} failed`, 5000);
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
 	}
 }
 
@@ -581,6 +935,66 @@ class ObsiXivSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		containerEl.createEl("h3", { text: "Advanced Options" });
+
+		new Setting(containerEl)
+			.setName("Writing Style")
+			.setDesc("Choose the writing style for blog posts")
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption("alphaxiv", "AlphaXiv (fun & memes)")
+					.addOption("technical", "Technical (detailed)")
+					.addOption("casual", "Casual (easy to read)")
+					.addOption("academic", "Academic (formal)")
+					.setValue(this.plugin.settings.writingStyle)
+					.onChange(async (value) => {
+						this.plugin.settings.writingStyle = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Custom Prompt")
+			.setDesc("Add custom instructions for the AI (optional, will be added to the system prompt)")
+			.addTextArea((text) =>
+				text
+					.setPlaceholder("e.g., Focus on the methodology section...\nExplain complex concepts simply...")
+					.setValue(this.plugin.settings.customPrompt)
+					.onChange(async (value) => {
+						this.plugin.settings.customPrompt = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Enable Caching")
+			.setDesc("Cache generated blog posts to speed up re-generation with same settings")
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.enableCache)
+					.onChange(async (value) => {
+						this.plugin.settings.enableCache = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		if (this.plugin.settings.enableCache) {
+			new Setting(containerEl)
+				.setName("Clear Cache")
+				.setDesc(`Currently ${this.plugin.cache.size} cached entries`)
+				.addButton((button) =>
+					button
+						.setButtonText("Clear All Cache")
+						.setWarning()
+						.onClick(async () => {
+							this.plugin.cache.clear();
+							await this.plugin.saveCache();
+							new Notice("✅ Cache cleared!");
+							this.display(); // Refresh settings
+						})
+				);
+		}
 
 		containerEl.createEl("h3", { text: "Setup" });
 		containerEl.createEl("p", {
