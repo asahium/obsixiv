@@ -2,6 +2,7 @@ import {
 	App,
 	Editor,
 	MarkdownView,
+	MarkdownRenderer,
 	Modal,
 	Notice,
 	Plugin,
@@ -52,6 +53,20 @@ export default class ObsiXivPlugin extends Plugin {
 			name: "Generate AlphaXiv blog post from PDF",
 			callback: async () => {
 				await this.generateBlogPostFromActivePdf();
+			},
+		});
+
+		// Add command to chat about PDF
+		this.addCommand({
+			id: "chat-about-pdf",
+			name: "Chat about PDF paper",
+			callback: async () => {
+				const activeFile = this.app.workspace.getActiveFile();
+				if (!activeFile || activeFile.extension !== "pdf") {
+					new Notice("Please open a PDF file first");
+					return;
+				}
+				new PdfChatModal(this.app, this, activeFile).open();
 			},
 		});
 
@@ -194,6 +209,46 @@ export default class ObsiXivPlugin extends Plugin {
 		return pdfjsLib;
 	}
 
+	async askQuestion(pdfContent: string, question: string): Promise<string> {
+		try {
+			console.log("💬 Sending question to agent:", question);
+			const requestBody = {
+				pdfContent: pdfContent,
+				question: question,
+				temperature: 0.7,
+			};
+			
+			const response = await requestUrl({
+				url: `${this.settings.agentUrl}/api/v1/chat`,
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"X-API-Key": this.settings.apiKey,
+				},
+				body: JSON.stringify(requestBody),
+				throw: false,
+			});
+
+			console.log("📨 Chat response status:", response.status);
+			
+			if (response.status !== 200) {
+				console.error("❌ Agent error response:", response);
+				throw new Error(`Request failed, status ${response.status}`);
+			}
+
+			const data = response.json;
+
+			if (data.success && data.answer) {
+				return data.answer;
+			} else {
+				throw new Error(data.error || "No response from agent");
+			}
+		} catch (error) {
+			console.error("Chat error:", error);
+			throw new Error(`Chat error: ${error.message || error}`);
+		}
+	}
+
 	async generateBlogPostWithKoogAgent(pdfContent: string): Promise<string> {
 		try {
 			console.log("📡 Sending request to agent...");
@@ -277,6 +332,155 @@ generator: ObsiXiv
 			const leaf = this.app.workspace.getLeaf('split', 'vertical');
 			await leaf.openFile(file);
 		}
+	}
+}
+
+class PdfChatModal extends Modal {
+	plugin: ObsiXivPlugin;
+	pdfFile: TFile;
+	pdfContent: string = "";
+	chatHistory: { role: string; content: string }[] = [];
+	
+	constructor(app: App, plugin: ObsiXivPlugin, pdfFile: TFile) {
+		super(app);
+		this.plugin = plugin;
+		this.pdfFile = pdfFile;
+	}
+
+	async onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("obsixiv-chat-modal");
+
+		// Title
+		contentEl.createEl("h2", { text: `💬 Chat about: ${this.pdfFile.basename}` });
+
+		// Extract PDF text
+		new Notice("Loading PDF...");
+		try {
+			let fullText = await this.plugin.extractPdfText(this.pdfFile);
+			// Limit to 8000 chars like in blog generation
+			if (fullText.length > 8000) {
+				fullText = fullText.substring(0, 8000);
+			}
+			this.pdfContent = fullText;
+			new Notice("PDF loaded! Ask me anything.");
+		} catch (error) {
+			new Notice("Failed to load PDF");
+			console.error(error);
+			return;
+		}
+
+		// Chat container
+		const chatContainer = contentEl.createDiv("obsixiv-chat-container");
+		chatContainer.style.cssText = "max-height: 400px; overflow-y: auto; border: 1px solid var(--background-modifier-border); padding: 10px; margin: 10px 0; border-radius: 5px;";
+
+		// Input container
+		const inputContainer = contentEl.createDiv("obsixiv-input-container");
+		inputContainer.style.cssText = "display: flex; gap: 10px; margin-top: 10px;";
+
+		const input = inputContainer.createEl("input", {
+			type: "text",
+			placeholder: "Ask a question about the paper...",
+		});
+		input.style.cssText = "flex: 1; padding: 8px; border: 1px solid var(--background-modifier-border); border-radius: 5px;";
+
+		const sendButton = inputContainer.createEl("button", { text: "Send" });
+		sendButton.style.cssText = "padding: 8px 16px; border-radius: 5px;";
+
+		const sendQuestion = async () => {
+			const question = input.value.trim();
+			if (!question) return;
+
+			input.value = "";
+			input.disabled = true;
+			sendButton.disabled = true;
+
+			// Add user message
+			this.addMessage(chatContainer, "user", question);
+
+			try {
+				// Call agent
+				const answer = await this.plugin.askQuestion(this.pdfContent, question);
+				this.addMessage(chatContainer, "assistant", answer);
+			} catch (error) {
+				this.addMessage(chatContainer, "error", `Error: ${error.message}`);
+			}
+
+			input.disabled = false;
+			sendButton.disabled = false;
+			input.focus();
+		};
+
+		sendButton.onclick = sendQuestion;
+		input.addEventListener("keypress", (e) => {
+			if (e.key === "Enter") {
+				sendQuestion();
+			}
+		});
+
+		input.focus();
+	}
+
+	addMessage(container: HTMLElement, role: string, content: string) {
+		const messageDiv = container.createDiv("obsixiv-chat-message");
+		messageDiv.style.cssText = `
+			margin: 8px 0;
+			padding: 8px 12px;
+			border-radius: 8px;
+			position: relative;
+			${role === "user" ? "background: var(--interactive-accent); color: var(--text-on-accent); margin-left: 20%;" : ""}
+			${role === "assistant" ? "background: var(--background-secondary); margin-right: 20%;" : ""}
+			${role === "error" ? "background: var(--background-modifier-error); margin-right: 20%;" : ""}
+		`;
+
+		// Header with role and copy button
+		const headerDiv = messageDiv.createDiv();
+		headerDiv.style.cssText = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;";
+
+		const roleSpan = headerDiv.createEl("div", {
+			text: role === "user" ? "You" : role === "assistant" ? "🤖 Assistant" : "⚠️ Error",
+		});
+		roleSpan.style.cssText = "font-size: 0.85em; opacity: 0.8;";
+
+		// Add copy button for assistant messages
+		if (role === "assistant") {
+			const copyButton = headerDiv.createEl("button", { text: "📋 Copy" });
+			copyButton.style.cssText = "padding: 2px 8px; font-size: 0.8em; border-radius: 4px; cursor: pointer; opacity: 0.7;";
+			copyButton.onclick = () => {
+				navigator.clipboard.writeText(content);
+				copyButton.textContent = "✅ Copied!";
+				setTimeout(() => {
+					copyButton.textContent = "📋 Copy";
+				}, 2000);
+			};
+			copyButton.onmouseenter = () => {
+				copyButton.style.opacity = "1";
+			};
+			copyButton.onmouseleave = () => {
+				copyButton.style.opacity = "0.7";
+			};
+		}
+
+		// Content div for markdown rendering
+		const contentDiv = messageDiv.createDiv("obsixiv-chat-content");
+		
+		if (role === "user" || role === "error") {
+			// Simple text for user messages and errors
+			contentDiv.textContent = content;
+		} else {
+			// Render markdown for assistant messages
+			contentDiv.style.cssText = "line-height: 1.6;";
+			MarkdownRenderer.renderMarkdown(content, contentDiv, "", this.plugin);
+		}
+
+		// Scroll to bottom
+		container.scrollTop = container.scrollHeight;
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
 	}
 }
 

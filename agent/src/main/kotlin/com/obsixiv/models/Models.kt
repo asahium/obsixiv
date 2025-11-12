@@ -17,3 +17,16 @@ data class GenerateBlogPostResponse(
     val error: String? = null
 )
 
+@Serializable
+data class ChatRequest(
+    val pdfContent: String,
+    val question: String,
+    val temperature: Double = 0.7
+)
+
+@Serializable
+data class ChatResponse(
+    val answer: String,
+    val success: Boolean
+)
+
