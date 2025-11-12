@@ -474,7 +474,7 @@ export default class ObsiXivPlugin extends Plugin {
 		// Sort by similarity descending
 		blogPosts.sort((a, b) => b.similarity - a.similarity);
 
-		return blogPosts.slice(0, 5); // Return top 5 most similar
+		return blogPosts.slice(0, 3); // Return top 3 most similar to avoid graph overload
 	}
 
 	// Smart text truncation - cut at References section or use max length
