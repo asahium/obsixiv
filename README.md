@@ -445,14 +445,17 @@ Yes! Adjust temperature, toggle emojis and humor in settings. Custom prompts are
 
 ## 🎯 Roadmap
 
-- [ ] Support more AI providers (OpenAI, Google, etc.)
-- [ ] Batch processing multiple PDFs
-- [ ] Custom prompt templates
-- [ ] ArXiv metadata integration
-- [ ] Different writing styles (technical, casual, academic)
-- [ ] Image generation for blog posts
+- [x] ~~Support more AI providers~~ ✅ (Perplexity, Claude, OpenAI)
+- [x] ~~Batch processing multiple PDFs~~ ✅
+- [x] ~~Custom prompt templates~~ ✅
+- [x] ~~ArXiv metadata integration~~ ✅
+- [x] ~~Different writing styles~~ ✅ (technical, casual, academic, alphaxiv)
+- [x] ~~Caching for faster re-generation~~ ✅
+- [x] ~~PDF Chat feature~~ ✅
+- [x] ~~Extract key results and formulas~~ ✅
+- [ ] Image extraction from PDFs (tables, figures)
 - [ ] Export to HTML/PDF
-- [ ] Caching for faster re-generation
+- [ ] Support for local LLMs
 
 ---
 
