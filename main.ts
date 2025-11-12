@@ -382,36 +382,38 @@ export default class ObsiXivPlugin extends Plugin {
 			const relatedPapers: string[] = [];
 
 			// Method 1: Use ArXiv API to find related papers by category
-			if (metadata?.arxivId) {
+			if (metadata?.arxivId && metadata?.categories?.[0]) {
 				try {
-					const categoryQuery = metadata.categories?.[0] || "";
-					if (categoryQuery) {
-						const searchUrl = `https://export.arxiv.org/api/query?search_query=cat:${encodeURIComponent(categoryQuery)}&start=0&max_results=5&sortBy=relevance&sortOrder=descending`;
-						const response = await requestUrl({ url: searchUrl });
+					const categoryQuery = metadata.categories[0];
+					const searchUrl = `https://export.arxiv.org/api/query?search_query=cat:${encodeURIComponent(categoryQuery)}&start=0&max_results=6&sortBy=relevance&sortOrder=descending`;
+					const response = await requestUrl({ url: searchUrl });
+					
+					const parser = new DOMParser();
+					const xmlDoc = parser.parseFromString(response.text, "text/xml");
+					
+					const entries = xmlDoc.querySelectorAll("entry");
+					entries.forEach((entry, index) => {
+						const arxivId = entry.querySelector("id")?.textContent?.split("/abs/")[1] || "";
 						
-						const parser = new DOMParser();
-						const xmlDoc = parser.parseFromString(response.text, "text/xml");
+						// Skip the original paper itself
+						if (arxivId === metadata.arxivId) return;
 						
-						const entries = xmlDoc.querySelectorAll("entry");
-						entries.forEach((entry, index) => {
-							if (index === 0) return; // Skip first (original paper)
-							
-							const title = entry.querySelector("title")?.textContent?.trim() || "";
-							const arxivId = entry.querySelector("id")?.textContent?.split("/abs/")[1] || "";
-							const url = `https://arxiv.org/abs/${arxivId}`;
-							
-							if (title && url && arxivId !== metadata.arxivId) {
-								relatedPapers.push(`- [${title}](${url})`);
-							}
-						});
-					}
+						const title = entry.querySelector("title")?.textContent?.trim().replace(/\s+/g, ' ') || "";
+						const url = `https://arxiv.org/abs/${arxivId}`;
+						
+						if (title && url && relatedPapers.length < 5) {
+							relatedPapers.push(`- [${title}](${url})`);
+						}
+					});
+					
+					console.log(`Found ${relatedPapers.length} papers by category`);
 				} catch (error) {
 					console.error("Failed to fetch related papers from ArXiv:", error);
 				}
 			}
 
-			// Method 2: Use Semantic Scholar API if we have the paper
-			if (metadata?.title && relatedPapers.length < 3) {
+			// Method 2: Use Semantic Scholar API if we have the paper title
+			if (metadata?.title && relatedPapers.length < 5) {
 				try {
 					const searchUrl = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(metadata.title)}&limit=1&fields=paperId`;
 					const response = await requestUrl({ url: searchUrl });
@@ -419,12 +421,14 @@ export default class ObsiXivPlugin extends Plugin {
 
 					if (data.data && data.data.length > 0) {
 						const paperId = data.data[0].paperId;
-						const recsUrl = `https://api.semanticscholar.org/graph/v1/paper/${paperId}/recommendations?limit=5&fields=title,externalIds`;
+						const recsUrl = `https://api.semanticscholar.org/graph/v1/paper/${paperId}/recommendations?limit=5&fields=title,externalIds,paperId`;
 						const recsResponse = await requestUrl({ url: recsUrl });
 						const recsData = JSON.parse(recsResponse.text);
 
 						if (recsData.recommendedPapers) {
 							recsData.recommendedPapers.forEach((paper: any) => {
+								if (relatedPapers.length >= 5) return;
+								
 								const title = paper.title;
 								const arxivId = paper.externalIds?.ArXiv;
 								const url = arxivId 
@@ -437,13 +441,48 @@ export default class ObsiXivPlugin extends Plugin {
 							});
 						}
 					}
+					
+					console.log(`Found ${relatedPapers.length} total papers (including Semantic Scholar)`);
 				} catch (error) {
 					console.error("Failed to fetch recommendations from Semantic Scholar:", error);
 				}
 			}
 
-			console.log(`✅ Found ${relatedPapers.length} related papers`);
-			return relatedPapers.slice(0, 5); // Limit to 5
+			// Method 3: Fallback - extract keywords from PDF and search ArXiv
+			if (relatedPapers.length === 0 && pdfContent) {
+				try {
+					console.log("🔍 No papers found, trying keyword-based search...");
+					// Extract first meaningful line as a keyword (usually contains key terms)
+					const lines = pdfContent.split('\n').filter(l => l.trim().length > 10);
+					const keywords = lines.slice(0, 3).join(' ').substring(0, 100);
+					
+					const searchUrl = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(keywords)}&start=0&max_results=5&sortBy=relevance&sortOrder=descending`;
+					const response = await requestUrl({ url: searchUrl });
+					
+					const parser = new DOMParser();
+					const xmlDoc = parser.parseFromString(response.text, "text/xml");
+					
+					const entries = xmlDoc.querySelectorAll("entry");
+					entries.forEach((entry, index) => {
+						if (relatedPapers.length >= 5) return;
+						
+						const title = entry.querySelector("title")?.textContent?.trim().replace(/\s+/g, ' ') || "";
+						const arxivId = entry.querySelector("id")?.textContent?.split("/abs/")[1] || "";
+						const url = `https://arxiv.org/abs/${arxivId}`;
+						
+						if (title && url) {
+							relatedPapers.push(`- [${title}](${url})`);
+						}
+					});
+					
+					console.log(`Found ${relatedPapers.length} papers via keyword search`);
+				} catch (error) {
+					console.error("Failed keyword-based search:", error);
+				}
+			}
+
+			console.log(`✅ Total found: ${relatedPapers.length} related papers`);
+			return relatedPapers.slice(0, 5); // Always limit to 5 max
 		} catch (error) {
 			console.error("❌ Error finding related papers:", error);
 			return [];
@@ -539,13 +578,19 @@ export default class ObsiXivPlugin extends Plugin {
 				console.log("✅ Blog post received! Length:", blogPost.length);
 			}
 
-			// Find and add related papers
+			// Always add related papers section at the end
 			new Notice("🔗 Finding related papers...");
 			const relatedPapers = await this.findRelatedPapers(pdfContent, metadata);
 			
+			// Always add the section, even if no papers found
+			blogPost += `\n\n---\n\n## 📚 Related Papers\n\n`;
+			
 			if (relatedPapers.length > 0) {
-				blogPost += `\n\n---\n\n## 📚 Related Papers\n\n${relatedPapers.join('\n')}\n`;
+				blogPost += relatedPapers.join('\n') + '\n';
 				console.log(`✅ Added ${relatedPapers.length} related papers to blog post`);
+			} else {
+				blogPost += `*No related papers found. Try searching on [ArXiv](https://arxiv.org/) or [Semantic Scholar](https://www.semanticscholar.org/).*\n`;
+				console.log("ℹ️ No related papers found");
 			}
 
 			// Save blog post
