@@ -9,6 +9,7 @@ import {
 	PluginSettingTab,
 	Setting,
 	TFile,
+	TFolder,
 	normalizePath,
 	requestUrl,
 } from "obsidian";
@@ -16,7 +17,7 @@ import {
 interface ObsiXivSettings {
 	apiKey: string;
 	agentUrl: string;
-	outputFolder: string;
+	rootFolder: string; // Root folder for all ObsiXiv content
 	temperature: number;
 	includeEmojis: boolean;
 	includeHumor: boolean;
@@ -42,7 +43,7 @@ interface CacheEntry {
 const DEFAULT_SETTINGS: ObsiXivSettings = {
 	apiKey: "",
 	agentUrl: "http://localhost:8080",
-	outputFolder: "blog-posts",
+	rootFolder: "obsixiv",
 	temperature: 0.8,
 	includeEmojis: true,
 	includeHumor: true,
@@ -54,6 +55,43 @@ const DEFAULT_SETTINGS: ObsiXivSettings = {
 export default class ObsiXivPlugin extends Plugin {
 	settings: ObsiXivSettings;
 	cache: Map<string, CacheEntry> = new Map();
+
+	// Get path to papers folder
+	getPapersFolder(): string {
+		return normalizePath(`${this.settings.rootFolder}/papers`);
+	}
+
+	// Get path to blog posts folder
+	getBlogPostsFolder(): string {
+		return normalizePath(`${this.settings.rootFolder}/blog-posts`);
+	}
+
+	// Ensure folder structure exists
+	async ensureFolderStructure() {
+		const root = normalizePath(this.settings.rootFolder);
+		const papers = this.getPapersFolder();
+		const blogs = this.getBlogPostsFolder();
+
+		try {
+			await this.app.vault.createFolder(root);
+		} catch (e) {
+			// Folder might already exist
+		}
+
+		try {
+			await this.app.vault.createFolder(papers);
+		} catch (e) {
+			// Folder might already exist
+		}
+
+		try {
+			await this.app.vault.createFolder(blogs);
+		} catch (e) {
+			// Folder might already exist
+		}
+
+		console.log("📁 Folder structure ready:", { root, papers, blogs });
+	}
 
 	async onload() {
 		await this.loadSettings();
@@ -220,7 +258,9 @@ export default class ObsiXivPlugin extends Plugin {
 	// Search for multiple papers by title using ArXiv API
 	async searchPapersOnArxiv(title: string, maxResults: number = 10): Promise<Array<{ url: string; metadata: any }>> {
 		try {
-			const searchUrl = `https://export.arxiv.org/api/query?search_query=ti:${encodeURIComponent(title)}&start=0&max_results=${maxResults}&sortBy=relevance&sortOrder=descending`;
+			// Use 'all:' for broader search that includes title, abstract, and other fields
+			// This gives better results than strict 'ti:' (title only)
+			const searchUrl = `https://export.arxiv.org/api/query?search_query=all:"${encodeURIComponent(title)}"&start=0&max_results=${maxResults}&sortBy=relevance&sortOrder=descending`;
 			
 			console.log("🔍 Searching ArXiv for:", title, `(max ${maxResults} results)`);
 			const response = await requestUrl({ url: searchUrl });
@@ -345,21 +385,16 @@ export default class ObsiXivPlugin extends Plugin {
 		console.log("📥 Downloading PDF from:", url);
 		new Notice("Downloading PDF...");
 
+		// Ensure folder structure exists
+		await this.ensureFolderStructure();
+
 		const response = await requestUrl({ url, method: "GET" });
 		const pdfData = response.arrayBuffer;
 
-		// Save PDF to vault
-		const pdfFolder = "papers-downloads";
-		const folder = normalizePath(pdfFolder);
-		
-		try {
-			await this.app.vault.createFolder(folder);
-		} catch (error) {
-			// Folder might already exist
-		}
-
+		// Save PDF to papers folder
+		const papersFolder = this.getPapersFolder();
 		const sanitizedFilename = filename.replace(/[^a-zA-Z0-9-_]/g, "_");
-		const filepath = normalizePath(`${folder}/${sanitizedFilename}.pdf`);
+		const filepath = normalizePath(`${papersFolder}/${sanitizedFilename}.pdf`);
 
 		// Check if file already exists
 		let existingFile = this.app.vault.getAbstractFileByPath(filepath);
@@ -373,6 +408,112 @@ export default class ObsiXivPlugin extends Plugin {
 		new Notice(`PDF downloaded: ${file.name}`);
 		
 		return file;
+	}
+
+	// Extract keywords from text (ML/AI specific terms)
+	extractKeywords(text: string): string[] {
+		const keywordPatterns = [
+			// ML/DL architectures
+			/\b(transformer|attention|bert|gpt|llm|diffusion|vae|gan|cnn|rnn|lstm|gru)\b/gi,
+			// ML domains
+			/\b(nlp|cv|computer vision|natural language|reinforcement learning|supervised|unsupervised)\b/gi,
+			// ML techniques
+			/\b(neural network|deep learning|machine learning|flow|normalizing flow|variational)\b/gi,
+			// Specific methods
+			/\b(backpropagation|gradient descent|optimization|regularization|batch normalization)\b/gi,
+			// Applications
+			/\b(classification|segmentation|detection|generation|translation|summarization)\b/gi,
+		];
+
+		const keywords = new Set<string>();
+		
+		for (const pattern of keywordPatterns) {
+			const matches = text.matchAll(pattern);
+			for (const match of matches) {
+				keywords.add(match[0].toLowerCase());
+			}
+		}
+
+		return Array.from(keywords);
+	}
+
+	// Find similar blog posts in the vault based on keywords
+	async findSimilarBlogPosts(currentKeywords: string[], currentFilePath: string): Promise<Array<{file: TFile, similarity: number}>> {
+		const folder = this.getBlogPostsFolder();
+		const folderObj = this.app.vault.getAbstractFileByPath(folder);
+		
+		if (!folderObj || !(folderObj instanceof TFolder)) {
+			return [];
+		}
+
+		const blogPosts: Array<{file: TFile, similarity: number}> = [];
+
+		// Get all markdown files in the output folder
+		const files = folderObj.children.filter(f => f instanceof TFile && f.extension === 'md') as TFile[];
+
+		for (const file of files) {
+			if (file.path === currentFilePath) continue; // Skip current file
+
+			try {
+				const content = await this.app.vault.read(file);
+				const fileKeywords = this.extractKeywords(content);
+
+				// Calculate similarity (Jaccard similarity)
+				const intersection = currentKeywords.filter(k => fileKeywords.includes(k));
+				const union = new Set([...currentKeywords, ...fileKeywords]);
+				const similarity = intersection.length / union.size;
+
+				if (similarity > 0.1) { // At least 10% similarity
+					blogPosts.push({ file, similarity });
+				}
+			} catch (error) {
+				console.error(`Error reading ${file.path}:`, error);
+			}
+		}
+
+		// Sort by similarity descending
+		blogPosts.sort((a, b) => b.similarity - a.similarity);
+
+		return blogPosts.slice(0, 5); // Return top 5 most similar
+	}
+
+	// Smart text truncation - cut at References section or use max length
+	truncatePdfContent(content: string, maxLength: number = 50000): string {
+		// Try to find References/Bibliography section
+		const referencePatterns = [
+			/\n\s*References\s*\n/i,
+			/\n\s*REFERENCES\s*\n/i,
+			/\n\s*Bibliography\s*\n/i,
+			/\n\s*BIBLIOGRAPHY\s*\n/i,
+			/\n\s*\d+\.\s*References\s*\n/i,
+			/\n\s*References\s+and\s+Notes\s*\n/i
+		];
+
+		let cutPosition = -1;
+		for (const pattern of referencePatterns) {
+			const match = content.match(pattern);
+			if (match && match.index) {
+				cutPosition = match.index;
+				console.log(`📚 Found references section at position ${cutPosition}`);
+				break;
+			}
+		}
+
+		// If references found and it's before maxLength, cut there
+		if (cutPosition > 0 && cutPosition < content.length) {
+			const beforeRefs = content.substring(0, cutPosition);
+			console.log(`✂️ Cutting at References: ${content.length} → ${beforeRefs.length} chars`);
+			return beforeRefs + "\n\n[References section omitted]";
+		}
+
+		// Otherwise, use max length
+		if (content.length > maxLength) {
+			console.log(`✂️ Trimming by max length: ${content.length} → ${maxLength} chars`);
+			return content.substring(0, maxLength) + "\n\n[Content truncated]";
+		}
+
+		console.log(`✅ Using full content: ${content.length} chars`);
+		return content;
 	}
 
 	// Find related papers based on references in PDF content
@@ -522,12 +663,9 @@ export default class ObsiXivPlugin extends Plugin {
 				return;
 			}
 
-			// Limit text size to avoid API timeouts (take first 8000 chars)
-			const maxLength = 8000;
-			if (pdfContent.length > maxLength) {
-				console.log(`✂️ Trimming PDF content from ${pdfContent.length} to ${maxLength} chars`);
-				pdfContent = pdfContent.substring(0, maxLength) + "\n\n[Content truncated for processing]";
-			}
+			// Smart truncation: cut at References section or use 50000 char limit
+			// This allows the full paper (except bibliography) to be processed
+			pdfContent = this.truncatePdfContent(pdfContent, 50000);
 
 			// Check cache first
 			let blogPost: string;
@@ -816,13 +954,10 @@ export default class ObsiXivPlugin extends Plugin {
 
 
 	async saveBlogPost(originalFilename: string, blogPost: string, metadata?: any) {
-		// Ensure output folder exists
-		const folder = normalizePath(this.settings.outputFolder);
-		try {
-			await this.app.vault.createFolder(folder);
-		} catch (error) {
-			// Folder might already exist
-		}
+		// Ensure folder structure exists
+		await this.ensureFolderStructure();
+
+		const folder = this.getBlogPostsFolder();
 
 		// Generate filename
 		const timestamp = new Date().toISOString().split("T")[0];
@@ -833,34 +968,47 @@ export default class ObsiXivPlugin extends Plugin {
 			`${folder}/${timestamp}_${sanitizedName}.md`
 		);
 
-		// Add frontmatter (with ArXiv metadata if available)
-		let frontmatter = '';
-		if (metadata) {
-			frontmatter = `---
-title: "${metadata.title?.replace(/"/g, '\\"') || originalFilename}"
-arxiv_id: "${metadata.arxivId || ''}"
-arxiv_url: "${metadata.url || ''}"
-authors: "${metadata.authors?.join(', ') || ''}"
-published: "${metadata.published || ''}"
-categories: "${metadata.categories?.join(', ') || ''}"
-source_pdf: "${originalFilename}.pdf"
-generated: ${new Date().toISOString()}
-generator: ObsiXiv
----
-
-`;
-		} else {
-			frontmatter = `---
-title: "${originalFilename}"
-source_pdf: "${originalFilename}.pdf"
-generated: ${new Date().toISOString()}
-generator: ObsiXiv
----
-
-`;
+		// Add title header if we have metadata
+		let header = '';
+		if (metadata?.title) {
+			header = `# ${metadata.title}\n\n`;
+			if (metadata.authors && metadata.authors.length > 0) {
+				header += `**Authors:** ${metadata.authors.join(', ')}\n\n`;
+			}
+			if (metadata.arxivId) {
+				header += `**ArXiv:** [${metadata.arxivId}](${metadata.url})\n\n`;
+			}
+			if (metadata.published) {
+				const date = new Date(metadata.published);
+				header += `**Published:** ${date.toLocaleDateString()}\n\n`;
+			}
+			header += `---\n\n`;
 		}
 
-		const fullContent = frontmatter + blogPost;
+		// Extract keywords from the blog post for similarity matching
+		const keywords = this.extractKeywords(blogPost);
+		console.log(`🔑 Extracted ${keywords.length} keywords:`, keywords.slice(0, 10).join(', '));
+
+		// Find similar blog posts before creating the file
+		const similarPosts = await this.findSimilarBlogPosts(keywords, filename);
+		
+		// Add "Similar Blog Posts" section if found
+		let similarSection = '';
+		if (similarPosts.length > 0) {
+			similarSection = `\n\n---\n\n## 🔗 Similar Blog Posts\n\n`;
+			similarSection += `*Based on keyword similarity, you might be interested in:*\n\n`;
+			
+			for (const {file, similarity} of similarPosts) {
+				const similarityPercent = Math.round(similarity * 100);
+				// Use wiki-style links for Obsidian
+				const linkName = file.basename;
+				similarSection += `- [[${linkName}]] *(${similarityPercent}% similar)*\n`;
+			}
+			
+			console.log(`🔗 Found ${similarPosts.length} similar blog posts`);
+		}
+
+		const fullContent = header + blogPost + similarSection;
 
 		// Create the file
 		await this.app.vault.create(filename, fullContent);
@@ -903,7 +1051,17 @@ class PaperSearchModal extends Modal {
 			type: "text",
 			placeholder: "e.g., Attention Is All You Need",
 		});
-		input.style.cssText = "width: 100%; padding: 10px 12px; font-size: 14px; border: 1px solid var(--background-modifier-border); border-radius: 5px; box-sizing: border-box;";
+		input.style.cssText = `
+			width: 100%; 
+			padding: 10px 12px; 
+			font-size: 14px; 
+			border: 1px solid var(--background-modifier-border); 
+			border-radius: 5px; 
+			box-sizing: border-box;
+			background-image: none !important;
+			-webkit-appearance: none;
+			appearance: none;
+		`.replace(/\s+/g, ' ').trim();
 
 		// Status message
 		const statusDiv = contentEl.createDiv("search-status");
@@ -939,7 +1097,7 @@ class PaperSearchModal extends Modal {
 			resultsContainer.empty();
 
 			try {
-				statusDiv.textContent = "🔍 Searching ArXiv...";
+				statusDiv.textContent = "Searching ArXiv...";
 				statusDiv.style.color = "var(--text-muted)";
 
 				// Search ArXiv for multiple results
@@ -953,8 +1111,8 @@ class PaperSearchModal extends Modal {
 					return;
 				}
 
-				statusDiv.textContent = `✅ Found ${this.results.length} result(s). Select one:`;
-				statusDiv.style.color = "var(--text-success)";
+				statusDiv.textContent = `Found ${this.results.length} result(s). Select one:`;
+				statusDiv.style.color = "var(--text-normal)";
 
 				// Display results
 				this.displayResults(resultsContainer);
@@ -1064,7 +1222,12 @@ class PaperSearchModal extends Modal {
 
 			this.close();
 
-			// Generate blog post from downloaded PDF
+			// Open PDF immediately so user can read while blog generates
+			const leaf = this.plugin.app.workspace.getLeaf('split', 'vertical');
+			await leaf.openFile(pdfFile);
+			console.log("✅ PDF opened, starting blog generation...");
+
+			// Generate blog post from downloaded PDF (runs in background while user reads)
 			await this.plugin.generateBlogPostFromPdf(pdfFile);
 		} catch (error) {
 			console.error("Download error:", error);
@@ -1239,11 +1402,8 @@ class PdfChatModal extends Modal {
 		new Notice("Loading PDF...");
 		try {
 			let fullText = await this.plugin.extractPdfText(this.pdfFile);
-			// Limit to 8000 chars like in blog generation
-			if (fullText.length > 8000) {
-				fullText = fullText.substring(0, 8000);
-			}
-			this.pdfContent = fullText;
+			// Use smart truncation (cut at References or use 50000 char limit)
+			this.pdfContent = this.plugin.truncatePdfContent(fullText, 50000);
 			new Notice("PDF loaded! Ask me anything.");
 		} catch (error) {
 			new Notice("Failed to load PDF");
@@ -1419,14 +1579,14 @@ class ObsiXivSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Output Folder")
-			.setDesc("Folder where generated blog posts will be saved")
+			.setName("Root Folder")
+			.setDesc("Root folder for ObsiXiv content (will contain 'papers' and 'blog-posts' subfolders)")
 			.addText((text) =>
 				text
-					.setPlaceholder("blog-posts")
-					.setValue(this.plugin.settings.outputFolder)
+					.setPlaceholder("obsixiv")
+					.setValue(this.plugin.settings.rootFolder)
 					.onChange(async (value) => {
-						this.plugin.settings.outputFolder = value;
+						this.plugin.settings.rootFolder = value;
 						await this.plugin.saveSettings();
 					})
 			);

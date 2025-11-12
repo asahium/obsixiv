@@ -23,3 +23,34 @@
     padding-bottom: 0.3em;
 }
 
+/* Search modal styles - AGGRESSIVELY remove all search icons */
+.obsixiv-search-modal input,
+.obsixiv-search-modal input[type="text"],
+.obsixiv-search-modal input[type="search"] {
+    background: var(--background-primary) !important;
+    background-image: none !important;
+    background-position: 0 0 !important;
+    -webkit-appearance: none !important;
+    -moz-appearance: none !important;
+    appearance: none !important;
+    padding-left: 12px !important;
+}
+
+/* Remove webkit search decorations */
+.obsixiv-search-modal input::-webkit-search-decoration,
+.obsixiv-search-modal input::-webkit-search-cancel-button,
+.obsixiv-search-modal input::-webkit-search-results-button,
+.obsixiv-search-modal input::-webkit-search-results-decoration {
+    -webkit-appearance: none !important;
+    display: none !important;
+}
+
+/* Remove any pseudo-elements that might contain icons */
+.obsixiv-search-modal .search-input-container::before,
+.obsixiv-search-modal .search-input-container::after,
+.obsixiv-search-modal input::before,
+.obsixiv-search-modal input::after {
+    content: none !important;
+    display: none !important;
+}
+
