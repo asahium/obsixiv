@@ -64,7 +64,7 @@ export default class ObsiXivPlugin extends Plugin {
 			"file-text",
 			"Generate AlphaXiv Blog Post",
 			async (evt: MouseEvent) => {
-				await this.generateBlogPostFromActivePdf();
+				await this.generateBlogPostFromActivePdfOrSearch();
 			}
 		);
 		ribbonIconEl.addClass("obsixiv-ribbon-class");
@@ -74,7 +74,16 @@ export default class ObsiXivPlugin extends Plugin {
 			id: "generate-alphaxiv-post",
 			name: "Generate AlphaXiv blog post from PDF",
 			callback: async () => {
-				await this.generateBlogPostFromActivePdf();
+				await this.generateBlogPostFromActivePdfOrSearch();
+			},
+		});
+
+		// Add command to search by title
+		this.addCommand({
+			id: "search-paper-by-title",
+			name: "Search paper by title and generate blog post",
+			callback: async () => {
+				new PaperSearchModal(this.app, this).open();
 			},
 		});
 
@@ -180,6 +189,18 @@ export default class ObsiXivPlugin extends Plugin {
 		return `${contentHash}_${settingsHash}`;
 	}
 
+	async generateBlogPostFromActivePdfOrSearch() {
+		const activeFile = this.app.workspace.getActiveFile();
+
+		// If active file is PDF, process it
+		if (activeFile && activeFile.extension === "pdf") {
+			await this.generateBlogPostFromPdf(activeFile);
+		} else {
+			// Otherwise, open search modal
+			new PaperSearchModal(this.app, this).open();
+		}
+	}
+
 	async generateBlogPostFromActivePdf() {
 		const activeFile = this.app.workspace.getActiveFile();
 
@@ -194,6 +215,212 @@ export default class ObsiXivPlugin extends Plugin {
 		}
 
 		await this.generateBlogPostFromPdf(activeFile);
+	}
+
+	// Search for paper by title using ArXiv API
+	async searchPaperOnArxiv(title: string): Promise<{ url: string; metadata: any } | null> {
+		try {
+			const searchUrl = `https://export.arxiv.org/api/query?search_query=ti:${encodeURIComponent(title)}&start=0&max_results=1&sortBy=relevance&sortOrder=descending`;
+			
+			console.log("🔍 Searching ArXiv for:", title);
+			const response = await requestUrl({ url: searchUrl });
+			
+			// Parse XML response
+			const parser = new DOMParser();
+			const xmlDoc = parser.parseFromString(response.text, "text/xml");
+			
+			const entry = xmlDoc.querySelector("entry");
+			if (!entry) {
+				console.log("❌ No results found on ArXiv");
+				return null;
+			}
+
+			const pdfLink = Array.from(entry.querySelectorAll("link"))
+				.find((link) => link.getAttribute("title") === "pdf")
+				?.getAttribute("href");
+
+			if (!pdfLink) {
+				console.log("❌ No PDF link found in ArXiv entry");
+				return null;
+			}
+
+			const arxivId = entry.querySelector("id")?.textContent?.split("/abs/")[1] || "";
+			const paperTitle = entry.querySelector("title")?.textContent?.trim() || title;
+			const authors = Array.from(entry.querySelectorAll("author name")).map(
+				(author) => author.textContent?.trim() || ""
+			);
+			const published = entry.querySelector("published")?.textContent?.trim() || "";
+			const summary = entry.querySelector("summary")?.textContent?.trim() || "";
+			const categories = Array.from(entry.querySelectorAll("category")).map(
+				(cat) => cat.getAttribute("term") || ""
+			);
+
+			const metadata = {
+				arxivId,
+				title: paperTitle,
+				authors,
+				published,
+				summary,
+				categories,
+				url: `https://arxiv.org/abs/${arxivId}`,
+			};
+
+			console.log("✅ Found on ArXiv:", paperTitle);
+			return { url: pdfLink, metadata };
+		} catch (error) {
+			console.error("❌ ArXiv search failed:", error);
+			return null;
+		}
+	}
+
+	// Search for paper using Semantic Scholar API (fallback)
+	async searchPaperOnSemanticScholar(title: string): Promise<{ url: string; metadata: any } | null> {
+		try {
+			const searchUrl = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(title)}&limit=1&fields=paperId,title,authors,year,abstract,openAccessPdf,externalIds`;
+			
+			console.log("🔍 Searching Semantic Scholar for:", title);
+			const response = await requestUrl({ url: searchUrl });
+			const data = JSON.parse(response.text);
+
+			if (!data.data || data.data.length === 0) {
+				console.log("❌ No results found on Semantic Scholar");
+				return null;
+			}
+
+			const paper = data.data[0];
+			const pdfUrl = paper.openAccessPdf?.url;
+
+			if (!pdfUrl) {
+				console.log("❌ No open access PDF available on Semantic Scholar");
+				return null;
+			}
+
+			const metadata = {
+				arxivId: paper.externalIds?.ArXiv || "",
+				title: paper.title,
+				authors: paper.authors?.map((a: any) => a.name) || [],
+				published: paper.year?.toString() || "",
+				summary: paper.abstract || "",
+				categories: [],
+				url: `https://www.semanticscholar.org/paper/${paper.paperId}`,
+			};
+
+			console.log("✅ Found on Semantic Scholar:", paper.title);
+			return { url: pdfUrl, metadata };
+		} catch (error) {
+			console.error("❌ Semantic Scholar search failed:", error);
+			return null;
+		}
+	}
+
+	// Download PDF from URL
+	async downloadPdfFromUrl(url: string, filename: string): Promise<TFile> {
+		console.log("📥 Downloading PDF from:", url);
+		new Notice("Downloading PDF...");
+
+		const response = await requestUrl({ url, method: "GET" });
+		const pdfData = response.arrayBuffer;
+
+		// Save PDF to vault
+		const pdfFolder = "papers-downloads";
+		const folder = normalizePath(pdfFolder);
+		
+		try {
+			await this.app.vault.createFolder(folder);
+		} catch (error) {
+			// Folder might already exist
+		}
+
+		const sanitizedFilename = filename.replace(/[^a-zA-Z0-9-_]/g, "_");
+		const filepath = normalizePath(`${folder}/${sanitizedFilename}.pdf`);
+
+		// Check if file already exists
+		let existingFile = this.app.vault.getAbstractFileByPath(filepath);
+		if (existingFile instanceof TFile) {
+			console.log("ℹ️ PDF already exists, using existing file");
+			return existingFile;
+		}
+
+		const file = await this.app.vault.createBinary(filepath, pdfData);
+		console.log("✅ PDF downloaded to:", filepath);
+		new Notice(`PDF downloaded: ${file.name}`);
+		
+		return file;
+	}
+
+	// Find related papers based on references in PDF content
+	async findRelatedPapers(pdfContent: string, metadata: any): Promise<string[]> {
+		try {
+			console.log("🔗 Finding related papers...");
+			const relatedPapers: string[] = [];
+
+			// Method 1: Use ArXiv API to find related papers by category
+			if (metadata?.arxivId) {
+				try {
+					const categoryQuery = metadata.categories?.[0] || "";
+					if (categoryQuery) {
+						const searchUrl = `https://export.arxiv.org/api/query?search_query=cat:${encodeURIComponent(categoryQuery)}&start=0&max_results=5&sortBy=relevance&sortOrder=descending`;
+						const response = await requestUrl({ url: searchUrl });
+						
+						const parser = new DOMParser();
+						const xmlDoc = parser.parseFromString(response.text, "text/xml");
+						
+						const entries = xmlDoc.querySelectorAll("entry");
+						entries.forEach((entry, index) => {
+							if (index === 0) return; // Skip first (original paper)
+							
+							const title = entry.querySelector("title")?.textContent?.trim() || "";
+							const arxivId = entry.querySelector("id")?.textContent?.split("/abs/")[1] || "";
+							const url = `https://arxiv.org/abs/${arxivId}`;
+							
+							if (title && url && arxivId !== metadata.arxivId) {
+								relatedPapers.push(`- [${title}](${url})`);
+							}
+						});
+					}
+				} catch (error) {
+					console.error("Failed to fetch related papers from ArXiv:", error);
+				}
+			}
+
+			// Method 2: Use Semantic Scholar API if we have the paper
+			if (metadata?.title && relatedPapers.length < 3) {
+				try {
+					const searchUrl = `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(metadata.title)}&limit=1&fields=paperId`;
+					const response = await requestUrl({ url: searchUrl });
+					const data = JSON.parse(response.text);
+
+					if (data.data && data.data.length > 0) {
+						const paperId = data.data[0].paperId;
+						const recsUrl = `https://api.semanticscholar.org/graph/v1/paper/${paperId}/recommendations?limit=5&fields=title,externalIds`;
+						const recsResponse = await requestUrl({ url: recsUrl });
+						const recsData = JSON.parse(recsResponse.text);
+
+						if (recsData.recommendedPapers) {
+							recsData.recommendedPapers.forEach((paper: any) => {
+								const title = paper.title;
+								const arxivId = paper.externalIds?.ArXiv;
+								const url = arxivId 
+									? `https://arxiv.org/abs/${arxivId}`
+									: `https://www.semanticscholar.org/paper/${paper.paperId}`;
+								
+								if (title && !relatedPapers.some(p => p.includes(title))) {
+									relatedPapers.push(`- [${title}](${url})`);
+								}
+							});
+						}
+					}
+				} catch (error) {
+					console.error("Failed to fetch recommendations from Semantic Scholar:", error);
+				}
+			}
+
+			console.log(`✅ Found ${relatedPapers.length} related papers`);
+			return relatedPapers.slice(0, 5); // Limit to 5
+		} catch (error) {
+			console.error("❌ Error finding related papers:", error);
+			return [];
+		}
 	}
 
 	async generateBlogPostFromPdf(pdfFile: TFile) {
@@ -283,6 +510,15 @@ export default class ObsiXivPlugin extends Plugin {
 				// Generate blog post using Koog Agent
 				blogPost = await this.generateBlogPostWithKoogAgent(pdfContent, metadata);
 				console.log("✅ Blog post received! Length:", blogPost.length);
+			}
+
+			// Find and add related papers
+			new Notice("🔗 Finding related papers...");
+			const relatedPapers = await this.findRelatedPapers(pdfContent, metadata);
+			
+			if (relatedPapers.length > 0) {
+				blogPost += `\n\n---\n\n## 📚 Related Papers\n\n${relatedPapers.join('\n')}\n`;
+				console.log(`✅ Added ${relatedPapers.length} related papers to blog post`);
 			}
 
 			// Save blog post
@@ -550,6 +786,126 @@ generator: ObsiXiv
 			const leaf = this.app.workspace.getLeaf('split', 'vertical');
 			await leaf.openFile(file);
 		}
+	}
+}
+
+class PaperSearchModal extends Modal {
+	plugin: ObsiXivPlugin;
+
+	constructor(app: App, plugin: ObsiXivPlugin) {
+		super(app);
+		this.plugin = plugin;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("obsixiv-search-modal");
+
+		contentEl.createEl("h2", { text: "🔍 Search Paper by Title" });
+
+		contentEl.createEl("p", {
+			text: "Enter the title of the academic paper you want to find:",
+		});
+
+		// Input field
+		const inputContainer = contentEl.createDiv("search-input-container");
+		inputContainer.style.cssText = "margin: 20px 0;";
+
+		const input = inputContainer.createEl("input", {
+			type: "text",
+			placeholder: "e.g., Attention Is All You Need",
+		});
+		input.style.cssText = "width: 100%; padding: 10px; font-size: 14px; border: 1px solid var(--background-modifier-border); border-radius: 5px;";
+
+		// Status message
+		const statusDiv = contentEl.createDiv("search-status");
+		statusDiv.style.cssText = "margin: 15px 0; min-height: 20px; color: var(--text-muted);";
+
+		// Buttons
+		const buttonsDiv = contentEl.createDiv("search-buttons");
+		buttonsDiv.style.cssText = "display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;";
+
+		const cancelBtn = buttonsDiv.createEl("button", { text: "Cancel" });
+		cancelBtn.onclick = () => this.close();
+
+		const searchBtn = buttonsDiv.createEl("button", {
+			text: "Search & Generate",
+			cls: "mod-cta",
+		});
+
+		const performSearch = async () => {
+			const title = input.value.trim();
+			if (!title) {
+				statusDiv.textContent = "⚠️ Please enter a paper title";
+				statusDiv.style.color = "var(--text-error)";
+				return;
+			}
+
+			input.disabled = true;
+			searchBtn.disabled = true;
+			cancelBtn.disabled = true;
+
+			try {
+				statusDiv.textContent = "🔍 Searching ArXiv...";
+				statusDiv.style.color = "var(--text-muted)";
+
+				// Try ArXiv first
+				let result = await this.plugin.searchPaperOnArxiv(title);
+
+				// Fallback to Semantic Scholar
+				if (!result) {
+					statusDiv.textContent = "🔍 ArXiv not found, trying Semantic Scholar...";
+					result = await this.plugin.searchPaperOnSemanticScholar(title);
+				}
+
+				if (!result) {
+					statusDiv.textContent = "❌ Paper not found on ArXiv or Semantic Scholar";
+					statusDiv.style.color = "var(--text-error)";
+					input.disabled = false;
+					searchBtn.disabled = false;
+					cancelBtn.disabled = false;
+					return;
+				}
+
+				statusDiv.textContent = `✅ Found: ${result.metadata.title}`;
+				statusDiv.style.color = "var(--text-success)";
+
+				// Download PDF
+				statusDiv.textContent = "📥 Downloading PDF...";
+				const pdfFile = await this.plugin.downloadPdfFromUrl(
+					result.url,
+					result.metadata.title || title
+				);
+
+				this.close();
+
+				// Generate blog post from downloaded PDF
+				await this.plugin.generateBlogPostFromPdf(pdfFile);
+			} catch (error) {
+				console.error("Search error:", error);
+				statusDiv.textContent = `❌ Error: ${error.message}`;
+				statusDiv.style.color = "var(--text-error)";
+				input.disabled = false;
+				searchBtn.disabled = false;
+				cancelBtn.disabled = false;
+			}
+		};
+
+		searchBtn.onclick = performSearch;
+		input.addEventListener("keypress", (e) => {
+			if (e.key === "Enter") {
+				performSearch();
+			}
+		});
+
+		// Focus input
+		setTimeout(() => input.focus(), 100);
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
 	}
 }
 
