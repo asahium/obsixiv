@@ -7,8 +7,6 @@ An Obsidian plugin that generates AlphaXiv-style blog posts from PDF papers usin
 
 > Transform dense academic papers into engaging, humorous, and accessible blog posts with just one click!
 
-[English](#) | [Русский](README.ru.md)
-
 ---
 
 ## 📋 Table of Contents
@@ -442,28 +440,6 @@ Usually 30-60 seconds depending on paper length and API response time.
 
 ### Can I customize the writing style?
 Yes! Adjust temperature, toggle emojis and humor in settings. Custom prompts are coming in future versions.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for:
-- Code of conduct
-- Development workflow
-- Pull request process
-- Code style guidelines
-
----
-
-## 📚 Documentation
-
-- 📖 [Setup Guide](docs/SETUP_GUIDE.md) - Complete step-by-step setup
-- 📦 [Installation Guide](docs/INSTALL.md) - Detailed installation
-- ⚡ [Quick Start](docs/QUICKSTART.md) - 5-minute setup
-- 🏗️ [Project Structure](docs/PROJECT_STRUCTURE.md) - Architecture overview
-- 🔧 [Build & Test](docs/BUILD_AND_TEST.md) - Development guide
-- 📝 [Changelog](docs/CHANGELOG.md) - Version history
-- 🔨 [Koog Agent Docs](agent/README.md) - Agent documentation
 
 ---
 
