@@ -133,7 +133,6 @@ class AlphaXivAgent {
             ---
             
             ## 🔢 Key Formulas
-            [ONLY if paper has important math. Show 1-2 most critical formulas.]
             
             $$[Formula in LaTeX]$$
             
