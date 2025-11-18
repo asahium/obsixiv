@@ -570,9 +570,9 @@ npm run build
 - [x] ~~Paper search by title~~ ✅
 - [x] ~~Related papers discovery~~ ✅
 - [x] ~~MCP server integration~~ ✅
-- [ ] Image extraction from PDFs (tables, figures)
-- [ ] Export to HTML/PDF
-- [ ] Support for local LLMs
+- [x] ~~Image extraction from PDFs (tables, figures)~~ ✅
+- [x] ~~Export to HTML/PDF~~ ✅
+- [x] ~~Support for local LLMs~~ ✅
 
 ---
 
@@ -588,14 +588,6 @@ MIT License - see [LICENSE](LICENSE) file for details
 - [AlphaXiv](https://alphaxiv.org) - Inspiration for blog style
 - [Obsidian](https://obsidian.md) - Best note-taking app
 - [Anthropic](https://anthropic.com) - Claude AI
-
----
-
-## 💬 Support
-
-- 🐛 [Report Bug](https://github.com/yourusername/obsixiv/issues/new?template=bug_report.md)
-- 💡 [Request Feature](https://github.com/yourusername/obsixiv/issues/new?template=feature_request.md)
-- ⭐ Star this repo if you find it useful!
 
 ---
 
